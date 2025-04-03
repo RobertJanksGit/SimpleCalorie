@@ -40,9 +40,14 @@ yarn-error.*
 # typescript
 *.tsbuildinfo
 
+# Firebase
+google-services.json
+GoogleService-Info.plist
+firebase-debug.log
+firebase-debug.*.log
+
+# Project specific
 app-example
-
-
 todos.md
 PRD.md
 .cursorrules

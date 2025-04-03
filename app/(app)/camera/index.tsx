@@ -7,11 +7,14 @@ import {
   Alert,
   Modal,
   FlatList,
+  ActivityIndicator,
 } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { PhotoService } from "../../../services/PhotoService";
+import { useAuth } from "../../../contexts/AuthContext";
 
 // Define meal types
 const MEAL_TYPES = [
@@ -25,7 +28,9 @@ export default function CameraScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const [isCameraReady, setIsCameraReady] = useState(false);
   const [showMealSelector, setShowMealSelector] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   const cameraRef = useRef<CameraView>(null);
+  const { user } = useAuth();
   const { mealType: initialMealType } = useLocalSearchParams<{
     mealType: string;
   }>();
@@ -49,7 +54,7 @@ export default function CameraScreen() {
   }
 
   const handleCapture = async () => {
-    if (!cameraRef.current || !isCameraReady) return;
+    if (!cameraRef.current || !isCameraReady || !user) return;
 
     try {
       const photo = await cameraRef.current.takePictureAsync({
@@ -61,12 +66,24 @@ export default function CameraScreen() {
         throw new Error("Failed to capture photo");
       }
 
-      // TODO: Handle the captured photo (upload to Firebase Storage)
-      console.log("Photo captured:", photo.uri);
-      console.log("Meal type:", selectedMealType);
+      setIsUploading(true);
 
-      // Navigate back to home screen
-      router.back();
+      try {
+        // Upload the photo using PhotoService
+        const photoService = PhotoService.getInstance();
+        await photoService.retryUpload(photo.uri, user.uid, selectedMealType);
+
+        Alert.alert("Success", "Photo uploaded successfully!");
+        router.back();
+      } catch (error) {
+        console.error("Error uploading photo:", error);
+        Alert.alert(
+          "Upload Error",
+          "Failed to upload photo. Please try again."
+        );
+      } finally {
+        setIsUploading(false);
+      }
     } catch (error) {
       console.error("Error capturing photo:", error);
       Alert.alert("Error", "Failed to capture photo. Please try again.");
@@ -151,13 +168,17 @@ export default function CameraScreen() {
         onCameraReady={() => setIsCameraReady(true)}
       >
         <View style={styles.buttonContainer}>
-          <TouchableOpacity
-            style={styles.captureButton}
-            onPress={handleCapture}
-            disabled={!isCameraReady}
-          >
-            <View style={styles.captureButtonInner} />
-          </TouchableOpacity>
+          {isUploading ? (
+            <ActivityIndicator size="large" color="white" />
+          ) : (
+            <TouchableOpacity
+              style={styles.captureButton}
+              onPress={handleCapture}
+              disabled={!isCameraReady}
+            >
+              <View style={styles.captureButtonInner} />
+            </TouchableOpacity>
+          )}
         </View>
       </CameraView>
 
