@@ -43,6 +43,8 @@ yarn-error.*
 # Firebase
 google-services.json
 GoogleService-Info.plist
+GoogleService-Info*.plist
+"GoogleService-Info (2).plist"
 firebase-debug.log
 firebase-debug.*.log
 
