@@ -7,7 +7,7 @@ import {
   SafeAreaView,
   ScrollView,
 } from "react-native";
-import { Link } from "expo-router";
+import { Link, router } from "expo-router";
 import { useAuth } from "../../contexts/AuthContext";
 import { Ionicons } from "@expo/vector-icons";
 
@@ -33,6 +33,7 @@ export default function HomeScreen() {
         <TouchableOpacity>
           <Text style={styles.premiumText}>Go Premium</Text>
         </TouchableOpacity>
+        <Text style={styles.headerTitle}>Home</Text>
         <TouchableOpacity onPress={signOut}>
           <Ionicons name="person-outline" size={24} color="black" />
         </TouchableOpacity>
@@ -108,10 +109,12 @@ export default function HomeScreen() {
           <Ionicons name="home" size={24} color="#007AFF" />
           <Text style={[styles.navText, { color: "#007AFF" }]}>Home</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem}>
-          <Ionicons name="camera-outline" size={24} color="#666" />
-          <Text style={styles.navText}>Camera</Text>
-        </TouchableOpacity>
+        <Link href="../camera" asChild>
+          <TouchableOpacity style={styles.navItem}>
+            <Ionicons name="camera-outline" size={24} color="#666" />
+            <Text style={styles.navText}>Camera</Text>
+          </TouchableOpacity>
+        </Link>
         <TouchableOpacity style={styles.navItem}>
           <Ionicons name="person-outline" size={24} color="#666" />
           <Text style={styles.navText}>Me</Text>
