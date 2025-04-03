@@ -13,6 +13,10 @@ export default {
     ios: {
       bundleIdentifier: "com.robjank.myapp",
       supportsTablet: true,
+      infoPlist: {
+        NSCameraUsageDescription:
+          "This app uses the camera to capture food photos for calorie tracking.",
+      },
     },
     android: {
       bundleIdentifier: "com.robjank.myapp",
@@ -20,6 +24,7 @@ export default {
         foregroundImage: "./assets/images/adaptive-icon.png",
         backgroundColor: "#ffffff",
       },
+      permissions: ["CAMERA"],
     },
     web: {
       bundler: "metro",
@@ -35,6 +40,13 @@ export default {
           imageWidth: 200,
           resizeMode: "contain",
           backgroundColor: "#ffffff",
+        },
+      ],
+      [
+        "expo-camera",
+        {
+          cameraPermission:
+            "Allow $(PRODUCT_NAME) to access your camera to capture food photos.",
         },
       ],
     ],

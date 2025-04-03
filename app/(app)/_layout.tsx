@@ -16,12 +16,17 @@ export default function AppLayout() {
   }
 
   return (
-    <Stack>
+    <Stack
+      screenOptions={{
+        headerShown: false,
+      }}
+    >
+      <Stack.Screen name="index" />
       <Stack.Screen
-        name="index"
+        name="camera"
         options={{
-          title: "Home",
-          headerStyle: { backgroundColor: "#FFFFFF" },
+          presentation: "modal",
+          animation: "slide_from_bottom",
         }}
       />
     </Stack>

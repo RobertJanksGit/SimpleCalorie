@@ -94,7 +94,15 @@ export default function HomeScreen() {
                 {section.calories} calories suggested
               </Text>
             </View>
-            <TouchableOpacity style={styles.addButton}>
+            <TouchableOpacity
+              style={styles.addButton}
+              onPress={() =>
+                router.push({
+                  pathname: "./camera",
+                  params: { mealType: section.title.toLowerCase() },
+                })
+              }
+            >
               <Text style={styles.addButtonText}>
                 ADD {section.title.toLowerCase()}
               </Text>
@@ -109,12 +117,18 @@ export default function HomeScreen() {
           <Ionicons name="home" size={24} color="#007AFF" />
           <Text style={[styles.navText, { color: "#007AFF" }]}>Home</Text>
         </TouchableOpacity>
-        <Link href="../camera" asChild>
-          <TouchableOpacity style={styles.navItem}>
-            <Ionicons name="camera-outline" size={24} color="#666" />
-            <Text style={styles.navText}>Camera</Text>
-          </TouchableOpacity>
-        </Link>
+        <TouchableOpacity
+          style={styles.navItem}
+          onPress={() =>
+            router.push({
+              pathname: "./camera",
+              params: { mealType: "breakfast" },
+            })
+          }
+        >
+          <Ionicons name="camera-outline" size={24} color="#666" />
+          <Text style={styles.navText}>Camera</Text>
+        </TouchableOpacity>
         <TouchableOpacity style={styles.navItem}>
           <Ionicons name="person-outline" size={24} color="#666" />
           <Text style={styles.navText}>Me</Text>

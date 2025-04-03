@@ -1,25 +1,55 @@
-import React, { useState, useEffect, useRef } from "react";
-import { View, TouchableOpacity, StyleSheet, Text, Alert } from "react-native";
-import { Camera as ExpoCamera } from "expo-camera";
-import type { CameraType, CameraCapturedPicture } from "expo-camera";
+import React, { useState, useRef } from "react";
+import {
+  View,
+  TouchableOpacity,
+  StyleSheet,
+  Text,
+  Alert,
+  Modal,
+  FlatList,
+} from "react-native";
+import { CameraView, useCameraPermissions } from "expo-camera";
 import { Ionicons } from "@expo/vector-icons";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-export default function CameraScreen() {
-  const [hasPermission, setHasPermission] = useState<boolean | null>(null);
-  const [type, setType] = useState<CameraType>("back");
-  const cameraRef = useRef<ExpoCamera>(null);
+// Define meal types
+const MEAL_TYPES = [
+  { id: "breakfast", label: "BREAKFAST" },
+  { id: "lunch", label: "LUNCH" },
+  { id: "dinner", label: "DINNER" },
+  { id: "snacks", label: "SNACKS" },
+];
 
-  useEffect(() => {
-    (async () => {
-      const { status } = await ExpoCamera.requestCameraPermissionsAsync();
-      setHasPermission(status === "granted");
-    })();
-  }, []);
+export default function CameraScreen() {
+  const [permission, requestPermission] = useCameraPermissions();
+  const [isCameraReady, setIsCameraReady] = useState(false);
+  const [showMealSelector, setShowMealSelector] = useState(false);
+  const cameraRef = useRef<CameraView>(null);
+  const { mealType: initialMealType } = useLocalSearchParams<{
+    mealType: string;
+  }>();
+  const [selectedMealType, setSelectedMealType] = useState(
+    initialMealType || "breakfast"
+  );
+
+  if (!permission) {
+    return <View style={styles.container} />;
+  }
+
+  if (!permission.granted) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.text}>No access to camera</Text>
+        <TouchableOpacity onPress={requestPermission}>
+          <Text style={styles.text}>Grant Permission</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   const handleCapture = async () => {
-    if (!cameraRef.current) return;
+    if (!cameraRef.current || !isCameraReady) return;
 
     try {
       const photo = await cameraRef.current.takePictureAsync({
@@ -27,8 +57,13 @@ export default function CameraScreen() {
         base64: true,
       });
 
+      if (!photo) {
+        throw new Error("Failed to capture photo");
+      }
+
       // TODO: Handle the captured photo (upload to Firebase Storage)
       console.log("Photo captured:", photo.uri);
+      console.log("Meal type:", selectedMealType);
 
       // Navigate back to home screen
       router.back();
@@ -38,48 +73,95 @@ export default function CameraScreen() {
     }
   };
 
-  const toggleCameraType = () => {
-    setType((currentType) => (currentType === "back" ? "front" : "back"));
+  const handleMealSelect = (mealId: string) => {
+    setSelectedMealType(mealId);
+    setShowMealSelector(false);
   };
 
-  if (hasPermission === null) {
-    return <View style={styles.container} />;
-  }
-
-  if (hasPermission === false) {
-    return (
-      <View style={styles.container}>
-        <Text style={styles.text}>No access to camera</Text>
+  const renderMealSelector = () => (
+    <Modal
+      visible={showMealSelector}
+      transparent={true}
+      animationType="slide"
+      onRequestClose={() => setShowMealSelector(false)}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Select Meal Type</Text>
+            <TouchableOpacity onPress={() => setShowMealSelector(false)}>
+              <Ionicons name="close" size={24} color="#333" />
+            </TouchableOpacity>
+          </View>
+          <FlatList
+            data={MEAL_TYPES}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item }) => (
+              <TouchableOpacity
+                style={[
+                  styles.mealOption,
+                  selectedMealType === item.id && styles.selectedMealOption,
+                ]}
+                onPress={() => handleMealSelect(item.id)}
+              >
+                <Text
+                  style={[
+                    styles.mealOptionText,
+                    selectedMealType === item.id &&
+                      styles.selectedMealOptionText,
+                  ]}
+                >
+                  {item.label}
+                </Text>
+                {selectedMealType === item.id && (
+                  <Ionicons name="checkmark" size={20} color="#007AFF" />
+                )}
+              </TouchableOpacity>
+            )}
+          />
+        </View>
       </View>
-    );
-  }
+    </Modal>
+  );
 
   return (
     <SafeAreaView style={styles.container}>
-      <ExpoCamera ref={cameraRef} style={styles.camera} type={type}>
-        <View style={styles.buttonContainer}>
-          <TouchableOpacity
-            style={styles.flipButton}
-            onPress={toggleCameraType}
-          >
-            <Ionicons name="camera-reverse" size={28} color="white" />
-          </TouchableOpacity>
+      <View style={styles.header}>
+        <TouchableOpacity
+          style={styles.mealSelector}
+          onPress={() => setShowMealSelector(true)}
+        >
+          <Text style={styles.headerText}>
+            {selectedMealType?.toUpperCase() || "SELECT MEAL"}
+          </Text>
+          <Ionicons name="chevron-down" size={20} color="white" />
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.closeButton}
+          onPress={() => router.back()}
+        >
+          <Ionicons name="close" size={28} color="white" />
+        </TouchableOpacity>
+      </View>
 
+      <CameraView
+        ref={cameraRef}
+        style={styles.camera}
+        facing="back"
+        onCameraReady={() => setIsCameraReady(true)}
+      >
+        <View style={styles.buttonContainer}>
           <TouchableOpacity
             style={styles.captureButton}
             onPress={handleCapture}
+            disabled={!isCameraReady}
           >
             <View style={styles.captureButtonInner} />
           </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.closeButton}
-            onPress={() => router.back()}
-          >
-            <Ionicons name="close" size={28} color="white" />
-          </TouchableOpacity>
         </View>
-      </ExpoCamera>
+      </CameraView>
+
+      {renderMealSelector()}
     </SafeAreaView>
   );
 }
@@ -89,13 +171,31 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "black",
   },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    backgroundColor: "rgba(0,0,0,0.5)",
+  },
+  mealSelector: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  headerText: {
+    color: "white",
+    fontSize: 18,
+    fontWeight: "600",
+    marginRight: 5,
+  },
   camera: {
     flex: 1,
     justifyContent: "flex-end",
   },
   buttonContainer: {
     flexDirection: "row",
-    justifyContent: "space-around",
+    justifyContent: "center",
     alignItems: "center",
     marginBottom: 40,
     paddingHorizontal: 20,
@@ -106,11 +206,8 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 20,
   },
-  flipButton: {
-    padding: 15,
-  },
   closeButton: {
-    padding: 15,
+    padding: 5,
   },
   captureButton: {
     width: 70,
@@ -125,5 +222,47 @@ const styles = StyleSheet.create({
     height: 60,
     borderRadius: 30,
     backgroundColor: "white",
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "flex-end",
+  },
+  modalContent: {
+    backgroundColor: "white",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    maxHeight: "50%",
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 20,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "600",
+  },
+  mealOption: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 15,
+    paddingHorizontal: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "#eee",
+  },
+  selectedMealOption: {
+    backgroundColor: "#f0f8ff",
+  },
+  mealOptionText: {
+    fontSize: 16,
+    color: "#333",
+  },
+  selectedMealOptionText: {
+    color: "#007AFF",
+    fontWeight: "500",
   },
 });
