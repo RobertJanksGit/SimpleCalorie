@@ -2,273 +2,322 @@ import React from "react";
 import {
   View,
   Text,
-  TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
+  TouchableOpacity,
   ScrollView,
 } from "react-native";
-import { Link, router } from "expo-router";
-import { useAuth } from "../../contexts/AuthContext";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import { router } from "expo-router";
 
-interface MealSection {
-  title: string;
-  calories: number;
-}
+// Mock data - replace with real data later
+const dailySummary = {
+  caloriesRemaining: 1370,
+  caloriesGoal: 2000,
+  protein: { current: 59, goal: 120 },
+  carbs: { current: 55, goal: 250 },
+  fat: { current: 20, goal: 65 },
+};
+
+const meals = [
+  {
+    type: "Breakfast",
+    name: "Protein Smoothie",
+    time: "4:57 PM",
+    calories: 280,
+    protein: 24,
+    carbs: 30,
+    fat: 8,
+  },
+  {
+    type: "Lunch",
+    name: "Grilled Chicken Salad",
+    time: "4:57 PM",
+    calories: 350,
+    protein: 35,
+    carbs: 25,
+    fat: 12,
+  },
+];
 
 export default function HomeScreen() {
-  const { signOut } = useAuth();
-
-  const mealSections: MealSection[] = [
-    { title: "BREAKFAST", calories: 422 },
-    { title: "LUNCH", calories: 528 },
-    { title: "DINNER", calories: 739 },
-    { title: "SNACKS", calories: 422 },
-  ];
+  const percentageComplete = Math.round(
+    (dailySummary.caloriesRemaining / dailySummary.caloriesGoal) * 100
+  );
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <View style={{ width: 100 }}>
-          <TouchableOpacity>
-            <Text style={styles.premiumText}>Go Premium</Text>
-          </TouchableOpacity>
-        </View>
-        <Text style={styles.headerTitle}>Home</Text>
-        <View style={styles.profileIcon}>
-          <TouchableOpacity onPress={signOut}>
-            <Ionicons name="person-outline" size={24} color="black" />
-          </TouchableOpacity>
-        </View>
-      </View>
+      <ScrollView style={styles.scrollView}>
+        {/* Date Header */}
+        <Text style={styles.dateHeader}>Thursday, April 3</Text>
 
-      <ScrollView style={styles.content}>
-        {/* Calories Summary */}
-        <View style={styles.caloriesContainer}>
-          <Text style={styles.caloriesTitle}>CALORIES</Text>
-          <View style={styles.caloriesGrid}>
-            <View style={styles.gridItem}>
-              <Text style={styles.gridLabel}>BUDGET</Text>
-              <Text style={styles.gridValue}>2110</Text>
-            </View>
-            <View style={styles.gridItem}>
-              <Text style={styles.gridLabel}>FOOD</Text>
-              <Text style={styles.gridValue}>0</Text>
-            </View>
-            <View style={styles.gridItem}>
-              <Text style={styles.gridLabel}>EXERCISE</Text>
-              <Text style={styles.gridValue}>0</Text>
-            </View>
-            <View style={styles.gridItem}>
-              <Text style={styles.gridLabel}>NET</Text>
-              <Text style={styles.gridValue}>0</Text>
-            </View>
-            <View style={styles.gridItem}>
-              <Text style={[styles.gridLabel, { color: "#4CAF50" }]}>
-                UNDER
-              </Text>
-              <Text style={[styles.gridValue, { color: "#4CAF50" }]}>2110</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Promo Banner */}
-        <View style={styles.promoBanner}>
-          <Text style={styles.promoText}>70% off</Text>
-          <View style={styles.timerContainer}>
-            <View style={styles.timerBox}>
-              <Text style={styles.timerText}>23</Text>
-            </View>
-            <View style={styles.timerBox}>
-              <Text style={styles.timerText}>58</Text>
-            </View>
-            <View style={styles.timerBox}>
-              <Text style={styles.timerText}>43</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Meal Sections */}
-        {mealSections.map((section, index) => (
-          <View key={index} style={styles.mealSection}>
+        {/* Daily Summary Card */}
+        <View style={styles.summaryCard}>
+          <View style={styles.summaryHeader}>
             <View>
-              <Text style={styles.mealTitle}>{section.title}</Text>
-              <Text style={styles.mealCalories}>
-                {section.calories} calories suggested
+              <Text style={styles.summaryLabel}>Calories Remaining</Text>
+              <View style={styles.caloriesContainer}>
+                <Text style={styles.caloriesRemaining}>
+                  {dailySummary.caloriesRemaining}
+                </Text>
+                <Text style={styles.caloriesGoal}>
+                  / {dailySummary.caloriesGoal}
+                </Text>
+              </View>
+            </View>
+            <View style={styles.percentageContainer}>
+              <Text style={styles.percentageText}>{percentageComplete}%</Text>
+            </View>
+          </View>
+
+          {/* Macros */}
+          <View style={styles.macrosContainer}>
+            <MacroProgress
+              label="Protein"
+              current={dailySummary.protein.current}
+              goal={dailySummary.protein.goal}
+              color="#FF6B6B"
+            />
+            <MacroProgress
+              label="Carbs"
+              current={dailySummary.carbs.current}
+              goal={dailySummary.carbs.goal}
+              color="#4ECDC4"
+            />
+            <MacroProgress
+              label="Fat"
+              current={dailySummary.fat.current}
+              goal={dailySummary.fat.goal}
+              color="#FFD93D"
+            />
+          </View>
+        </View>
+
+        {/* Add Meal Buttons */}
+        <View style={styles.buttonContainer}>
+          <TouchableOpacity style={styles.addButton} onPress={() => {}}>
+            <Ionicons name="add" size={24} color="#4CAF50" />
+            <Text style={styles.addButtonText}>Add Meal</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.snapButton}
+            onPress={() => router.push("/camera")}
+          >
+            <Ionicons name="camera" size={24} color="#fff" />
+            <Text style={styles.snapButtonText}>Snap Meal</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Today's Meals */}
+        <Text style={styles.sectionTitle}>Today's Meals</Text>
+        {meals.map((meal, index) => (
+          <View key={index} style={styles.mealCard}>
+            <View>
+              <Text style={styles.mealType}>{meal.type}</Text>
+              <Text style={styles.mealName}>{meal.name}</Text>
+              <Text style={styles.macroText}>
+                Protein: {meal.protein}g Carbs: {meal.carbs}g Fat: {meal.fat}g
               </Text>
             </View>
-            <TouchableOpacity
-              style={styles.addButton}
-              onPress={() =>
-                router.push({
-                  pathname: "./camera",
-                  params: { mealType: section.title.toLowerCase() },
-                })
-              }
-            >
-              <Text style={styles.addButtonText}>
-                ADD {section.title.toLowerCase()}
-              </Text>
-            </TouchableOpacity>
+            <View style={styles.mealRight}>
+              <Text style={styles.mealTime}>{meal.time}</Text>
+              <Text style={styles.mealCalories}>{meal.calories} cal</Text>
+            </View>
           </View>
         ))}
       </ScrollView>
-
-      {/* Bottom Navigation */}
-      <View style={styles.bottomNav}>
-        <TouchableOpacity style={styles.navItem}>
-          <Ionicons name="home" size={24} color="#007AFF" />
-          <Text style={[styles.navText, { color: "#007AFF" }]}>Home</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.navItem}
-          onPress={() =>
-            router.push({
-              pathname: "./camera",
-              params: { mealType: "breakfast" },
-            })
-          }
-        >
-          <Ionicons name="camera-outline" size={24} color="#666" />
-          <Text style={styles.navText}>Camera</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem}>
-          <Ionicons name="person-outline" size={24} color="#666" />
-          <Text style={styles.navText}>Me</Text>
-        </TouchableOpacity>
-      </View>
     </SafeAreaView>
+  );
+}
+
+// Macro Progress Component
+function MacroProgress({ label, current, goal, color }) {
+  const progress = (current / goal) * 100;
+  return (
+    <View style={styles.macroProgress}>
+      <Text style={styles.macroLabel}>{label}</Text>
+      <View style={styles.progressContainer}>
+        <View
+          style={[
+            styles.progressBar,
+            { width: `${progress}%`, backgroundColor: color },
+          ]}
+        />
+      </View>
+      <Text style={styles.macroValues}>
+        {current}g / {goal}g
+      </Text>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#FDFDFD",
+    backgroundColor: "#f5f5f5",
   },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#E5E5E5",
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: "600",
+  scrollView: {
     flex: 1,
-    textAlign: "center",
-  },
-  premiumText: {
-    fontSize: 16,
-    fontWeight: "600",
-    width: 100,
-  },
-  profileIcon: {
-    width: 100,
-    alignItems: "flex-end",
-  },
-  content: {
-    flex: 1,
-  },
-  caloriesContainer: {
     padding: 16,
   },
-  caloriesTitle: {
-    fontSize: 24,
-    fontWeight: "bold",
+  dateHeader: {
+    fontSize: 16,
+    color: "#666",
     marginBottom: 16,
   },
-  caloriesGrid: {
+  summaryCard: {
+    backgroundColor: "white",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  summaryHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
-    flexWrap: "wrap",
+    alignItems: "flex-start",
+    marginBottom: 20,
   },
-  gridItem: {
-    alignItems: "center",
-  },
-  gridLabel: {
-    fontSize: 12,
+  summaryLabel: {
+    fontSize: 14,
     color: "#666",
     marginBottom: 4,
   },
-  gridValue: {
-    fontSize: 20,
-    fontWeight: "bold",
-  },
-  promoBanner: {
-    backgroundColor: "#E8F5F3",
-    padding: 16,
+  caloriesContainer: {
     flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 16,
+    alignItems: "baseline",
   },
-  promoText: {
-    fontSize: 24,
+  caloriesRemaining: {
+    fontSize: 32,
     fontWeight: "bold",
-    color: "#00796B",
+    color: "#333",
   },
-  timerContainer: {
-    flexDirection: "row",
-    gap: 8,
+  caloriesGoal: {
+    fontSize: 16,
+    color: "#666",
+    marginLeft: 4,
   },
-  timerBox: {
-    backgroundColor: "#00796B",
-    padding: 8,
-    borderRadius: 4,
-    width: 40,
-    height: 40,
+  percentageContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "#4CAF50",
     justifyContent: "center",
     alignItems: "center",
   },
-  timerText: {
+  percentageText: {
     color: "white",
-    fontSize: 18,
+    fontSize: 14,
     fontWeight: "bold",
   },
-  mealSection: {
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: "#E5E5E5",
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
+  macrosContainer: {
+    gap: 12,
   },
-  mealTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
-    marginBottom: 4,
+  macroProgress: {
+    gap: 4,
   },
-  mealCalories: {
+  macroLabel: {
     fontSize: 14,
     color: "#666",
   },
-  addButton: {
-    backgroundColor: "#E3F2FD",
-    padding: 8,
+  progressContainer: {
+    height: 8,
+    backgroundColor: "#f0f0f0",
+    borderRadius: 4,
+    overflow: "hidden",
+  },
+  progressBar: {
+    height: "100%",
     borderRadius: 4,
   },
+  macroValues: {
+    fontSize: 12,
+    color: "#666",
+  },
+  buttonContainer: {
+    flexDirection: "row",
+    gap: 12,
+    marginBottom: 24,
+  },
+  addButton: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 12,
+    backgroundColor: "#E8F5E9",
+    borderRadius: 8,
+    gap: 8,
+  },
+  snapButton: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 12,
+    backgroundColor: "#4CAF50",
+    borderRadius: 8,
+    gap: 8,
+  },
   addButtonText: {
-    color: "#007AFF",
+    color: "#4CAF50",
+    fontSize: 16,
     fontWeight: "500",
   },
-  bottomNav: {
+  snapButtonText: {
+    color: "white",
+    fontSize: 16,
+    fontWeight: "500",
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: "600",
+    color: "#333",
+    marginBottom: 12,
+  },
+  mealCard: {
     flexDirection: "row",
-    justifyContent: "space-around",
-    padding: 12,
-    borderTopWidth: 1,
-    borderTopColor: "#E5E5E5",
+    justifyContent: "space-between",
     backgroundColor: "white",
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
-  navItem: {
-    alignItems: "center",
+  mealType: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#333",
+    marginBottom: 4,
   },
-  navText: {
-    fontSize: 12,
-    marginTop: 4,
+  mealName: {
+    fontSize: 14,
     color: "#666",
+    marginBottom: 4,
+  },
+  macroText: {
+    fontSize: 12,
+    color: "#888",
+  },
+  mealRight: {
+    alignItems: "flex-end",
+  },
+  mealTime: {
+    fontSize: 12,
+    color: "#888",
+    marginBottom: 4,
+  },
+  mealCalories: {
+    fontSize: 16,
+    fontWeight: "500",
+    color: "#333",
   },
 });
