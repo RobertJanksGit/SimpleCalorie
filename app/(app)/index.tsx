@@ -30,13 +30,17 @@ export default function HomeScreen() {
     <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity>
-          <Text style={styles.premiumText}>Go Premium</Text>
-        </TouchableOpacity>
+        <View style={{ width: 100 }}>
+          <TouchableOpacity>
+            <Text style={styles.premiumText}>Go Premium</Text>
+          </TouchableOpacity>
+        </View>
         <Text style={styles.headerTitle}>Home</Text>
-        <TouchableOpacity onPress={signOut}>
-          <Ionicons name="person-outline" size={24} color="black" />
-        </TouchableOpacity>
+        <View style={styles.profileIcon}>
+          <TouchableOpacity onPress={signOut}>
+            <Ionicons name="person-outline" size={24} color="black" />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView style={styles.content}>
@@ -145,7 +149,6 @@ const styles = StyleSheet.create({
   },
   header: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
     paddingHorizontal: 16,
     paddingVertical: 12,
@@ -155,10 +158,17 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 20,
     fontWeight: "600",
+    flex: 1,
+    textAlign: "center",
   },
   premiumText: {
     fontSize: 16,
     fontWeight: "600",
+    width: 100,
+  },
+  profileIcon: {
+    width: 100,
+    alignItems: "flex-end",
   },
   content: {
     flex: 1,
