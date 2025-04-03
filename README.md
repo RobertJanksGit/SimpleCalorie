@@ -48,3 +48,66 @@ Join our community of developers creating universal apps.
 
 - [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
 - [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+
+# Cal Tracker
+
+A React Native application built with Expo for tracking calories and nutrition.
+
+## Firebase Configuration
+
+This project uses Firebase for authentication, database, and storage. The Firebase configuration is set up using environment variables for security.
+
+### Setup Instructions
+
+1. Clone the repository
+2. Install dependencies:
+   ```
+   npm install
+   ```
+3. Create a `.env` file in the root directory with the following variables:
+   ```
+   FIREBASE_API_KEY=your_api_key
+   FIREBASE_AUTH_DOMAIN=your_auth_domain
+   FIREBASE_PROJECT_ID=your_project_id
+   FIREBASE_STORAGE_BUCKET=your_storage_bucket
+   FIREBASE_MESSAGING_SENDER_ID=your_messaging_sender_id
+   FIREBASE_APP_ID=your_app_id
+   FIREBASE_CLIENT_ID=your_client_id
+   ```
+4. Start the development server:
+   ```
+   npm start
+   ```
+
+## Firebase Usage
+
+To use Firebase services in your components, import them from the `firebaseConfig.ts` file:
+
+```typescript
+import { auth, firestore, storage } from "../firebaseConfig";
+
+// Example: Sign in with email and password
+import { signInWithEmailAndPassword } from "firebase/auth";
+
+const signIn = async (email: string, password: string) => {
+  try {
+    const userCredential = await signInWithEmailAndPassword(
+      auth,
+      email,
+      password
+    );
+    const user = userCredential.user;
+    console.log("Signed in user:", user);
+  } catch (error) {
+    console.error("Error signing in:", error);
+  }
+};
+```
+
+## Project Structure
+
+- `app/`: Contains the main application code
+- `assets/`: Contains images and other static assets
+- `components/`: Reusable UI components
+- `firebaseConfig.ts`: Firebase configuration and initialization
+- `app.config.js`: Expo configuration with environment variables

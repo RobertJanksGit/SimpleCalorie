@@ -29,6 +29,11 @@ yarn-error.*
 .DS_Store
 *.pem
 
+# Environment variables
+.env
+.env.*
+!.env.example
+
 # local env files
 .env*.local
 
@@ -36,3 +41,8 @@ yarn-error.*
 *.tsbuildinfo
 
 app-example
+
+
+todos.md
+PRD.md
+.cursorrules
