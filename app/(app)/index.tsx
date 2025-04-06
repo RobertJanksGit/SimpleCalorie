@@ -6,7 +6,10 @@ import {
   TouchableOpacity,
   ScrollView,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 
@@ -40,13 +43,32 @@ const meals = [
   },
 ];
 
+// Add interfaces
+interface MacroProgressProps {
+  label: string;
+  current: number;
+  goal: number;
+  color: string;
+}
+
+interface Meal {
+  type: string;
+  name: string;
+  time: string;
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+}
+
 export default function HomeScreen() {
+  const insets = useSafeAreaInsets();
   const percentageComplete = Math.round(
     (dailySummary.caloriesRemaining / dailySummary.caloriesGoal) * 100
   );
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={[styles.container, { paddingTop: insets.top }]}>
       <ScrollView style={styles.scrollView}>
         {/* Date Header */}
         <Text style={styles.dateHeader}>Thursday, April 3</Text>
@@ -126,12 +148,37 @@ export default function HomeScreen() {
           </View>
         ))}
       </ScrollView>
-    </SafeAreaView>
+
+      {/* Bottom Tab Bar */}
+      <View style={[styles.tabBar, { paddingBottom: insets.bottom }]}>
+        <TouchableOpacity style={styles.tabItem}>
+          <Ionicons name="home" size={24} color="#4CAF50" />
+          <Text style={[styles.tabText, { color: "#4CAF50" }]}>Home</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.tabItem}>
+          <Ionicons name="time-outline" size={24} color="#666" />
+          <Text style={styles.tabText}>History</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.tabItem, styles.chatTab]}>
+          <View style={styles.chatButton}>
+            <Ionicons name="chatbubble" size={24} color="white" />
+          </View>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.tabItem}>
+          <Ionicons name="stats-chart" size={24} color="#666" />
+          <Text style={styles.tabText}>Insights</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.tabItem}>
+          <Ionicons name="person-outline" size={24} color="#666" />
+          <Text style={styles.tabText}>Profile</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
   );
 }
 
-// Macro Progress Component
-function MacroProgress({ label, current, goal, color }) {
+// Update MacroProgress component with types
+function MacroProgress({ label, current, goal, color }: MacroProgressProps) {
   const progress = (current / goal) * 100;
   return (
     <View style={styles.macroProgress}>
@@ -319,5 +366,41 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "500",
     color: "#333",
+  },
+  tabBar: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+    alignItems: "center",
+    backgroundColor: "white",
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: "#eee",
+  },
+  tabItem: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 4,
+    flex: 1,
+  },
+  tabText: {
+    fontSize: 12,
+    color: "#666",
+    marginTop: 4,
+  },
+  chatTab: {
+    marginTop: -20,
+  },
+  chatButton: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "#4CAF50",
+    justifyContent: "center",
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
   },
 });
