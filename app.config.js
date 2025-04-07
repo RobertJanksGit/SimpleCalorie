@@ -16,6 +16,8 @@ export default {
       infoPlist: {
         NSCameraUsageDescription:
           "This app uses the camera to capture food photos for calorie tracking.",
+        NSPhotoLibraryUsageDescription:
+          "This app needs access to your photo library to upload food photos for calorie tracking.",
       },
     },
     android: {
@@ -24,7 +26,7 @@ export default {
         foregroundImage: "./assets/images/adaptive-icon.png",
         backgroundColor: "#ffffff",
       },
-      permissions: ["CAMERA"],
+      permissions: ["CAMERA", "READ_EXTERNAL_STORAGE"],
     },
     web: {
       bundler: "metro",

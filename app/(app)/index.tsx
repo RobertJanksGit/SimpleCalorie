@@ -12,6 +12,9 @@ import {
 } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
+import * as ImagePicker from "expo-image-picker";
+import { PhotoService } from "../../services/PhotoService";
+import { useAuth } from "../../contexts/AuthContext";
 
 // Mock data - replace with real data later
 const dailySummary = {
@@ -63,9 +66,47 @@ interface Meal {
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
   const percentageComplete = Math.round(
     (dailySummary.caloriesRemaining / dailySummary.caloriesGoal) * 100
   );
+
+  const handleUploadMeal = async () => {
+    try {
+      // Request permission
+      const permissionResult =
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+      if (!permissionResult.granted) {
+        alert("You need to enable photo library permissions to upload meals.");
+        return;
+      }
+
+      // Launch image picker
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets[0] && user) {
+        // Upload the selected photo
+        const photoService = PhotoService.getInstance();
+        await photoService.retryUpload(
+          result.assets[0].uri,
+          user.uid,
+          "upload"
+        );
+
+        // Navigate back after successful upload
+        router.back();
+      }
+    } catch (error) {
+      console.error("Error uploading photo:", error);
+      alert("Failed to upload photo. Please try again.");
+    }
+  };
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -117,9 +158,9 @@ export default function HomeScreen() {
 
         {/* Add Meal Buttons */}
         <View style={styles.buttonContainer}>
-          <TouchableOpacity style={styles.addButton} onPress={() => {}}>
-            <Ionicons name="add" size={24} color="#4CAF50" />
-            <Text style={styles.addButtonText}>Add Meal</Text>
+          <TouchableOpacity style={styles.addButton} onPress={handleUploadMeal}>
+            <Ionicons name="cloud-upload" size={24} color="#4CAF50" />
+            <Text style={styles.addButtonText}>Upload Meal</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.snapButton}
@@ -132,21 +173,24 @@ export default function HomeScreen() {
 
         {/* Today's Meals */}
         <Text style={styles.sectionTitle}>Today's Meals</Text>
-        {meals.map((meal, index) => (
-          <View key={index} style={styles.mealCard}>
-            <View>
-              <Text style={styles.mealType}>{meal.type}</Text>
-              <Text style={styles.mealName}>{meal.name}</Text>
-              <Text style={styles.macroText}>
-                Protein: {meal.protein}g Carbs: {meal.carbs}g Fat: {meal.fat}g
-              </Text>
+        {meals.map((meal, index) => {
+          const key = `meal-${index}`;
+          return (
+            <View style={styles.mealCard} key={key}>
+              <View>
+                <Text style={styles.mealType}>{meal.type}</Text>
+                <Text style={styles.mealName}>{meal.name}</Text>
+                <Text style={styles.macroText}>
+                  Protein: {meal.protein}g Carbs: {meal.carbs}g Fat: {meal.fat}g
+                </Text>
+              </View>
+              <View style={styles.mealRight}>
+                <Text style={styles.mealTime}>{meal.time}</Text>
+                <Text style={styles.mealCalories}>{meal.calories} cal</Text>
+              </View>
             </View>
-            <View style={styles.mealRight}>
-              <Text style={styles.mealTime}>{meal.time}</Text>
-              <Text style={styles.mealCalories}>{meal.calories} cal</Text>
-            </View>
-          </View>
-        ))}
+          );
+        })}
       </ScrollView>
 
       {/* Bottom Tab Bar */}
