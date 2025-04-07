@@ -1,10 +1,14 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   ScrollView,
+  Animated,
+  TextInput,
+  Modal,
+  Image,
 } from "react-native";
 import {
   SafeAreaView,
@@ -16,36 +20,22 @@ import * as ImagePicker from "expo-image-picker";
 import { PhotoService } from "../../services/PhotoService";
 import { useAuth } from "../../contexts/AuthContext";
 import ChatUI from "../../components/ChatUI";
-
-// Mock data - replace with real data later
-const dailySummary = {
-  caloriesRemaining: 1370,
-  caloriesGoal: 2000,
-  protein: { current: 59, goal: 120 },
-  carbs: { current: 55, goal: 250 },
-  fat: { current: 20, goal: 65 },
-};
-
-const meals = [
-  {
-    type: "Breakfast",
-    name: "Protein Smoothie",
-    time: "4:57 PM",
-    calories: 280,
-    protein: 24,
-    carbs: 30,
-    fat: 8,
-  },
-  {
-    type: "Lunch",
-    name: "Grilled Chicken Salad",
-    time: "4:57 PM",
-    calories: 350,
-    protein: 35,
-    carbs: 25,
-    fat: 12,
-  },
-];
+import { useDailyTotals } from "../../hooks/useDailyTotals";
+import { db } from "../../firebaseConfig";
+import {
+  collection,
+  query,
+  orderBy,
+  getDocs,
+  doc,
+  deleteDoc,
+  updateDoc,
+  getDoc,
+} from "firebase/firestore";
+import {
+  GestureHandlerRootView,
+  Swipeable,
+} from "react-native-gesture-handler";
 
 // Add interfaces
 interface MacroProgressProps {
@@ -63,6 +53,15 @@ interface Meal {
   protein: number;
   carbs: number;
   fat: number;
+  id: string;
+  photoUrl?: string;
+}
+
+interface EditModalProps {
+  visible: boolean;
+  meal: Meal | null;
+  onClose: () => void;
+  onSave: (mealId: string, calories: number) => void;
 }
 
 export default function HomeScreen() {
@@ -75,9 +74,13 @@ export default function HomeScreen() {
     }>();
   const [photoTaken, setPhotoTaken] = useState(false);
   const [isChatVisible, setIsChatVisible] = useState(false);
-  const percentageComplete = Math.round(
-    (dailySummary.caloriesRemaining / dailySummary.caloriesGoal) * 100
-  );
+  const { totals, goals, loading, getRemainingCalories, getMacroPercentages } =
+    useDailyTotals(user?.uid || "testUser");
+  const [meals, setMeals] = useState<Meal[]>([]);
+  const [selectedMealId, setSelectedMealId] = useState<string | null>(null);
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [editingMeal, setEditingMeal] = useState<Meal | null>(null);
+  const swipeableRefs = useRef<{ [key: string]: Swipeable | null }>({});
 
   // Handle URL parameters
   useEffect(() => {
@@ -88,6 +91,121 @@ export default function HomeScreen() {
       setIsChatVisible(true);
     }
   }, [photoTakenParam, showChatParam]);
+
+  // Fetch meals for today
+  useEffect(() => {
+    const fetchMeals = async () => {
+      if (!user?.uid) return;
+
+      const date = new Date().toISOString().split("T")[0];
+      const mealsPath = `users/${user.uid}/logs/${date}/meals`;
+      const mealsRef = collection(db, mealsPath);
+      const q = query(mealsRef, orderBy("timestamp", "desc"));
+
+      try {
+        const snapshot = await getDocs(q);
+        const fetchedMeals = snapshot.docs.map((doc) => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            type: data.mealType || "Meal",
+            name: data.name || "Meal",
+            time: new Date(data.timestamp).toLocaleTimeString([], {
+              hour: "numeric",
+              minute: "2-digit",
+            }),
+            calories: data.calories || 0,
+            protein: data.protein || 0,
+            carbs: data.carbs || 0,
+            fat: data.fat || 0,
+            photoUrl: data.photoUrl || null,
+          };
+        });
+        setMeals(fetchedMeals);
+      } catch (error) {
+        console.error("Error fetching meals:", error);
+      }
+    };
+
+    fetchMeals();
+  }, [user?.uid]);
+
+  const handleDeleteMeal = async (mealId: string) => {
+    if (!user?.uid) return;
+
+    try {
+      const date = new Date().toISOString().split("T")[0];
+      const mealRef = doc(db, `users/${user.uid}/logs/${date}/meals`, mealId);
+
+      await deleteDoc(mealRef);
+      setMeals((prevMeals) => prevMeals.filter((meal) => meal.id !== mealId));
+
+      // Close any open swipeable
+      if (swipeableRefs.current[mealId]) {
+        swipeableRefs.current[mealId]?.close();
+      }
+    } catch (error) {
+      console.error("Error deleting meal:", error);
+      alert("Failed to delete meal. Please try again.");
+    }
+  };
+
+  const handleEditMeal = async (mealId: string, newCalories: number) => {
+    if (!user?.uid) return;
+
+    // Close modal first to prevent UI freeze
+    setEditModalVisible(false);
+    setEditingMeal(null);
+
+    try {
+      const date = new Date().toISOString().split("T")[0];
+      const mealRef = doc(db, `users/${user.uid}/logs/${date}/meals`, mealId);
+      const dailyTotalsRef = doc(db, `users/${user.uid}/dailyTotals/${date}`);
+
+      // Update local state optimistically
+      setMeals((prevMeals) =>
+        prevMeals.map((meal) =>
+          meal.id === mealId ? { ...meal, calories: newCalories } : meal
+        )
+      );
+
+      // Update the meal in Firestore
+      await updateDoc(mealRef, {
+        calories: newCalories,
+        updatedAt: new Date().toISOString(),
+      });
+
+      // Recalculate daily totals
+      const mealsRef = collection(db, `users/${user.uid}/logs/${date}/meals`);
+      const mealsSnapshot = await getDocs(mealsRef);
+
+      let totalCalories = 0;
+      mealsSnapshot.forEach((doc) => {
+        const mealData = doc.data();
+        totalCalories += mealData.calories || 0;
+      });
+
+      // Update daily totals
+      await updateDoc(dailyTotalsRef, {
+        calories: totalCalories,
+        lastUpdated: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error("Error updating meal:", error);
+      // Revert local state on error
+      const originalMeal = meals.find((m) => m.id === mealId);
+      if (originalMeal) {
+        setMeals((prevMeals) =>
+          prevMeals.map((meal) =>
+            meal.id === mealId
+              ? { ...meal, calories: originalMeal.calories }
+              : meal
+          )
+        );
+      }
+      alert("Failed to update meal. Please try again.");
+    }
+  };
 
   const handleOpenChat = () => {
     console.log("Opening chat...");
@@ -140,148 +258,319 @@ export default function HomeScreen() {
     }
   };
 
-  return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
-      <ScrollView style={styles.scrollView}>
-        {/* Date Header */}
-        <Text style={styles.dateHeader}>Thursday, April 3</Text>
+  const MacroProgress = ({
+    label,
+    current,
+    goal,
+    color,
+  }: MacroProgressProps) => {
+    const percentage = Math.round((current / goal) * 100);
+    return (
+      <View style={styles.macroProgress}>
+        <Text style={styles.macroLabel}>{label}</Text>
+        <View style={styles.progressContainer}>
+          <View
+            style={[
+              styles.progressBar,
+              { width: `${percentage}%`, backgroundColor: color },
+            ]}
+          />
+        </View>
+        <Text style={styles.macroValues}>
+          {current}g / {goal}g
+        </Text>
+      </View>
+    );
+  };
 
-        {/* Daily Summary Card */}
-        <View style={styles.summaryCard}>
-          <View style={styles.summaryHeader}>
-            <View>
-              <Text style={styles.summaryLabel}>Calories Remaining</Text>
-              <View style={styles.caloriesContainer}>
-                <Text style={styles.caloriesRemaining}>
-                  {dailySummary.caloriesRemaining}
+  // Calculate calories consumed and percentage
+  const caloriesConsumed = totals?.calories || 0;
+  const remainingCalories = goals.calories - caloriesConsumed;
+  const percentageComplete = Math.round(
+    (caloriesConsumed / goals.calories) * 100
+  );
+
+  // Add a useEffect to log the totals for debugging
+  useEffect(() => {
+    console.log("Daily Totals:", totals);
+  }, [totals]);
+
+  const EditModal = ({ visible, meal, onClose, onSave }: EditModalProps) => {
+    const [calories, setCalories] = useState(meal?.calories.toString() || "0");
+
+    useEffect(() => {
+      if (meal) {
+        setCalories(meal.calories.toString());
+      }
+    }, [meal]);
+
+    const handleSave = () => {
+      const newCalories = parseInt(calories) || 0;
+      if (meal) {
+        onSave(meal.id, newCalories);
+      }
+    };
+
+    return (
+      <Modal
+        visible={visible}
+        transparent
+        animationType="slide"
+        onRequestClose={onClose}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Edit Calories</Text>
+            <Text style={styles.modalMealName}>{meal?.name}</Text>
+
+            <TextInput
+              style={styles.calorieInput}
+              keyboardType="numeric"
+              value={calories}
+              onChangeText={setCalories}
+              placeholder="Enter calories"
+              returnKeyType="done"
+              onSubmitEditing={handleSave}
+            />
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.cancelButton]}
+                onPress={onClose}
+              >
+                <Text style={styles.modalButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.saveButton]}
+                onPress={handleSave}
+              >
+                <Text style={[styles.modalButtonText, styles.saveButtonText]}>
+                  Save
                 </Text>
-                <Text style={styles.caloriesGoal}>
-                  / {dailySummary.caloriesGoal}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
+
+  const renderMealCard = (meal: Meal) => {
+    const renderRightActions = (
+      progress: Animated.AnimatedInterpolation<number>
+    ) => {
+      const trans = progress.interpolate({
+        inputRange: [0, 1],
+        outputRange: [64, 0],
+      });
+
+      return (
+        <View style={styles.rightActions}>
+          <Animated.View style={{ transform: [{ translateX: trans }] }}>
+            <TouchableOpacity
+              style={[styles.actionButton, styles.editButton]}
+              onPress={() => {
+                setEditingMeal(meal);
+                setEditModalVisible(true);
+              }}
+            >
+              <Ionicons name="pencil" size={20} color="#FFF" />
+            </TouchableOpacity>
+          </Animated.View>
+          <Animated.View style={{ transform: [{ translateX: trans }] }}>
+            <TouchableOpacity
+              style={[styles.actionButton, styles.deleteButton]}
+              onPress={() => handleDeleteMeal(meal.id)}
+            >
+              <Ionicons name="trash" size={20} color="#FFF" />
+            </TouchableOpacity>
+          </Animated.View>
+        </View>
+      );
+    };
+
+    return (
+      <Swipeable
+        key={meal.id}
+        ref={(ref) => (swipeableRefs.current[meal.id] = ref)}
+        renderRightActions={renderRightActions}
+        rightThreshold={40}
+        onSwipeableOpen={() => setSelectedMealId(meal.id)}
+        onSwipeableClose={() => setSelectedMealId(null)}
+      >
+        <View style={styles.mealCard}>
+          {meal.photoUrl && (
+            <Image
+              source={{ uri: meal.photoUrl }}
+              style={styles.mealImage}
+              resizeMode="cover"
+            />
+          )}
+          <View style={styles.mealContent}>
+            <View style={styles.mealInfo}>
+              <Text style={styles.mealType}>{meal.type}</Text>
+              <Text style={styles.mealName}>{meal.name}</Text>
+              <Text style={styles.macroText}>
+                Protein: {meal.protein}g • Carbs: {meal.carbs}g • Fat:{" "}
+                {meal.fat}g
+              </Text>
+            </View>
+            <View style={styles.mealRight}>
+              <Text style={styles.mealTime}>{meal.time}</Text>
+              <Text style={styles.mealCalories}>{meal.calories} cal</Text>
+            </View>
+          </View>
+        </View>
+      </Swipeable>
+    );
+  };
+
+  return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <View style={[styles.container, { paddingTop: insets.top }]}>
+        <ScrollView style={styles.scrollView}>
+          {/* Date Header */}
+          <Text style={styles.dateHeader}>
+            {new Date().toLocaleDateString()}
+          </Text>
+
+          {/* Daily Summary Card */}
+          <View style={styles.summaryCard}>
+            <View style={styles.summaryHeader}>
+              <View>
+                <Text style={styles.summaryLabel}>Today's Calories</Text>
+                <View style={styles.caloriesContainer}>
+                  <Text style={styles.caloriesConsumed}>
+                    {loading ? "..." : caloriesConsumed}
+                  </Text>
+                  <Text style={styles.caloriesGoal}>/ {goals.calories}</Text>
+                </View>
+                <Text style={styles.remainingText}>
+                  {loading
+                    ? "Loading..."
+                    : remainingCalories > 0
+                    ? `${remainingCalories} calories remaining`
+                    : remainingCalories === 0
+                    ? "Goal reached!"
+                    : `${Math.abs(remainingCalories)} calories over goal`}
+                </Text>
+              </View>
+              <View
+                style={[
+                  styles.percentageContainer,
+                  {
+                    backgroundColor:
+                      remainingCalories >= 0 ? "#4CAF50" : "#FF6B6B",
+                    opacity: loading ? 0.5 : 1,
+                  },
+                ]}
+              >
+                <Text style={styles.percentageText}>
+                  {loading ? "..." : `${percentageComplete}%`}
                 </Text>
               </View>
             </View>
-            <View style={styles.percentageContainer}>
-              <Text style={styles.percentageText}>{percentageComplete}%</Text>
+
+            {/* Macros */}
+            <View style={styles.macrosContainer}>
+              <MacroProgress
+                label="Protein"
+                current={totals?.protein || 0}
+                goal={goals.protein}
+                color="#FF6B6B"
+              />
+              <MacroProgress
+                label="Carbs"
+                current={totals?.carbs || 0}
+                goal={goals.carbs}
+                color="#4ECDC4"
+              />
+              <MacroProgress
+                label="Fat"
+                current={totals?.fat || 0}
+                goal={goals.fat}
+                color="#FFD93D"
+              />
             </View>
           </View>
 
-          {/* Macros */}
-          <View style={styles.macrosContainer}>
-            <MacroProgress
-              label="Protein"
-              current={dailySummary.protein.current}
-              goal={dailySummary.protein.goal}
-              color="#FF6B6B"
-            />
-            <MacroProgress
-              label="Carbs"
-              current={dailySummary.carbs.current}
-              goal={dailySummary.carbs.goal}
-              color="#4ECDC4"
-            />
-            <MacroProgress
-              label="Fat"
-              current={dailySummary.fat.current}
-              goal={dailySummary.fat.goal}
-              color="#FFD93D"
-            />
+          {/* Add Meal Buttons */}
+          <View style={styles.buttonContainer}>
+            <TouchableOpacity
+              style={styles.addButton}
+              onPress={handleUploadMeal}
+            >
+              <Ionicons name="cloud-upload" size={24} color="#4CAF50" />
+              <Text style={styles.addButtonText}>Upload Meal</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.snapButton}
+              onPress={() => router.push("/camera")}
+            >
+              <Ionicons name="camera" size={24} color="#fff" />
+              <Text style={styles.snapButtonText}>Snap Meal</Text>
+            </TouchableOpacity>
           </View>
-        </View>
 
-        {/* Add Meal Buttons */}
-        <View style={styles.buttonContainer}>
-          <TouchableOpacity style={styles.addButton} onPress={handleUploadMeal}>
-            <Ionicons name="cloud-upload" size={24} color="#4CAF50" />
-            <Text style={styles.addButtonText}>Upload Meal</Text>
+          {/* Today's Meals */}
+          <Text style={styles.sectionTitle}>Today's Meals</Text>
+          {meals.map((meal) => (
+            <View key={meal.id} style={styles.mealCardContainer}>
+              {renderMealCard(meal)}
+            </View>
+          ))}
+          {meals.length === 0 && (
+            <Text style={styles.noMealsText}>No meals logged today</Text>
+          )}
+        </ScrollView>
+
+        {/* Bottom Tab Bar */}
+        <View style={[styles.tabBar, { paddingBottom: insets.bottom }]}>
+          <TouchableOpacity style={styles.tabItem}>
+            <Ionicons name="home" size={24} color="#4CAF50" />
+            <Text style={[styles.tabText, { color: "#4CAF50" }]}>Home</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.tabItem}>
+            <Ionicons name="time-outline" size={24} color="#666" />
+            <Text style={styles.tabText}>History</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={styles.snapButton}
-            onPress={() => router.push("/camera")}
+            style={[styles.tabItem, styles.chatTab]}
+            onPress={handleOpenChat}
+            activeOpacity={0.7}
           >
-            <Ionicons name="camera" size={24} color="#fff" />
-            <Text style={styles.snapButtonText}>Snap Meal</Text>
+            <View style={styles.chatButton}>
+              <Ionicons name="chatbubble" size={24} color="white" />
+            </View>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.tabItem}>
+            <Ionicons name="stats-chart" size={24} color="#666" />
+            <Text style={styles.tabText}>Insights</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.tabItem}>
+            <Ionicons name="person-outline" size={24} color="#666" />
+            <Text style={styles.tabText}>Profile</Text>
           </TouchableOpacity>
         </View>
 
-        {/* Today's Meals */}
-        <Text style={styles.sectionTitle}>Today's Meals</Text>
-        {meals.map((meal, index) => {
-          const key = `meal-${index}`;
-          return (
-            <View style={styles.mealCard} key={key}>
-              <View>
-                <Text style={styles.mealType}>{meal.type}</Text>
-                <Text style={styles.mealName}>{meal.name}</Text>
-                <Text style={styles.macroText}>
-                  Protein: {meal.protein}g Carbs: {meal.carbs}g Fat: {meal.fat}g
-                </Text>
-              </View>
-              <View style={styles.mealRight}>
-                <Text style={styles.mealTime}>{meal.time}</Text>
-                <Text style={styles.mealCalories}>{meal.calories} cal</Text>
-              </View>
-            </View>
-          );
-        })}
-      </ScrollView>
+        <EditModal
+          visible={editModalVisible}
+          meal={editingMeal}
+          onClose={() => {
+            setEditModalVisible(false);
+            setEditingMeal(null);
+          }}
+          onSave={handleEditMeal}
+        />
 
-      {/* Bottom Tab Bar */}
-      <View style={[styles.tabBar, { paddingBottom: insets.bottom }]}>
-        <TouchableOpacity style={styles.tabItem}>
-          <Ionicons name="home" size={24} color="#4CAF50" />
-          <Text style={[styles.tabText, { color: "#4CAF50" }]}>Home</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem}>
-          <Ionicons name="time-outline" size={24} color="#666" />
-          <Text style={styles.tabText}>History</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.tabItem, styles.chatTab]}
-          onPress={handleOpenChat}
-          activeOpacity={0.7}
-        >
-          <View style={styles.chatButton}>
-            <Ionicons name="chatbubble" size={24} color="white" />
-          </View>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem}>
-          <Ionicons name="stats-chart" size={24} color="#666" />
-          <Text style={styles.tabText}>Insights</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem}>
-          <Ionicons name="person-outline" size={24} color="#666" />
-          <Text style={styles.tabText}>Profile</Text>
-        </TouchableOpacity>
-      </View>
-
-      <ChatUI
-        isVisible={isChatVisible}
-        onClose={handleCloseChat}
-        userId={user?.uid || "testUser"}
-        showPhotoConfirmation={photoTaken}
-      />
-    </View>
-  );
-}
-
-// Update MacroProgress component with types
-function MacroProgress({ label, current, goal, color }: MacroProgressProps) {
-  const progress = (current / goal) * 100;
-  return (
-    <View style={styles.macroProgress}>
-      <Text style={styles.macroLabel}>{label}</Text>
-      <View style={styles.progressContainer}>
-        <View
-          style={[
-            styles.progressBar,
-            { width: `${progress}%`, backgroundColor: color },
-          ]}
+        <ChatUI
+          isVisible={isChatVisible}
+          onClose={handleCloseChat}
+          userId={user?.uid || "testUser"}
+          showPhotoConfirmation={photoTaken}
         />
       </View>
-      <Text style={styles.macroValues}>
-        {current}g / {goal}g
-      </Text>
-    </View>
+    </GestureHandlerRootView>
   );
 }
 
@@ -325,7 +614,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "baseline",
   },
-  caloriesRemaining: {
+  caloriesConsumed: {
     fontSize: 32,
     fontWeight: "bold",
     color: "#333",
@@ -335,11 +624,15 @@ const styles = StyleSheet.create({
     color: "#666",
     marginLeft: 4,
   },
+  remainingText: {
+    fontSize: 12,
+    color: "#666",
+    marginTop: 4,
+  },
   percentageContainer: {
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: "#4CAF50",
     justifyContent: "center",
     alignItems: "center",
   },
@@ -413,18 +706,33 @@ const styles = StyleSheet.create({
     color: "#333",
     marginBottom: 12,
   },
+  mealCardContainer: {
+    marginHorizontal: 16,
+    marginVertical: 6,
+  },
   mealCard: {
-    flexDirection: "row",
-    justifyContent: "space-between",
     backgroundColor: "white",
-    padding: 16,
     borderRadius: 12,
-    marginBottom: 12,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
+    overflow: "hidden",
+  },
+  mealImage: {
+    width: "100%",
+    height: 160,
+    backgroundColor: "#f0f0f0",
+  },
+  mealContent: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    padding: 16,
+  },
+  mealInfo: {
+    flex: 1,
+    marginRight: 16,
   },
   mealType: {
     fontSize: 16,
@@ -440,6 +748,7 @@ const styles = StyleSheet.create({
   macroText: {
     fontSize: 12,
     color: "#888",
+    marginTop: 4,
   },
   mealRight: {
     alignItems: "flex-end",
@@ -489,5 +798,87 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 4,
     elevation: 5,
+  },
+  noMealsText: {
+    textAlign: "center",
+    color: "#666",
+    fontSize: 16,
+    marginTop: 20,
+  },
+  rightActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginVertical: 6,
+  },
+  actionButton: {
+    width: 48,
+    height: "100%",
+    justifyContent: "center",
+    alignItems: "center",
+    borderRadius: 8,
+    marginLeft: 8,
+  },
+  editButton: {
+    backgroundColor: "#4ECDC4",
+  },
+  deleteButton: {
+    backgroundColor: "#FF6B6B",
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  modalContent: {
+    backgroundColor: "white",
+    borderRadius: 16,
+    padding: 24,
+    width: "80%",
+    maxWidth: 400,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: "600",
+    color: "#333",
+    marginBottom: 8,
+  },
+  modalMealName: {
+    fontSize: 16,
+    color: "#666",
+    marginBottom: 16,
+  },
+  calorieInput: {
+    borderWidth: 1,
+    borderColor: "#ddd",
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+    marginBottom: 24,
+  },
+  modalButtons: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 12,
+  },
+  modalButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    minWidth: 80,
+    alignItems: "center",
+  },
+  modalButtonText: {
+    fontSize: 16,
+    fontWeight: "500",
+  },
+  cancelButton: {
+    backgroundColor: "#f5f5f5",
+  },
+  saveButton: {
+    backgroundColor: "#4CAF50",
+  },
+  saveButtonText: {
+    color: "white",
   },
 });

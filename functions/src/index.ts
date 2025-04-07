@@ -7,15 +7,17 @@
  * See a full list of supported triggers at https://firebase.google.com/docs/functions
  */
 
-import { onObjectFinalized } from "firebase-functions/v2/storage";
+import * as admin from "firebase-admin";
+import * as functions from "firebase-functions/v1";
 import { onRequest } from "firebase-functions/v2/https";
+import { onObjectFinalized } from "firebase-functions/v2/storage";
+import * as cors from "cors";
+import { UserRecord } from "firebase-admin/auth";
 import { initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import * as logger from "firebase-functions/logger";
 import { defineSecret } from "firebase-functions/params";
 import OpenAI from "openai";
-import * as admin from "firebase-admin";
-import * as cors from "cors";
 
 // Start writing functions
 // https://firebase.google.com/docs/functions/typescript
@@ -275,37 +277,38 @@ async function updateDailyTotals(
   date: string,
   meal: FoodAnalysis
 ): Promise<void> {
-  const dailyTotalsRef = db
-    .collection("users")
-    .doc(userId)
-    .collection("dailyTotals")
-    .doc(date);
+  const userRef = db.collection("users").doc(userId);
+  const dailyTotalsRef = userRef.collection("dailyTotals").doc(date);
+  const mealsRef = userRef.collection("logs").doc(date).collection("meals");
 
   await db.runTransaction(async (transaction) => {
-    const doc = await transaction.get(dailyTotalsRef);
-    const currentTotals: DailyTotals = doc.exists
-      ? (doc.data() as DailyTotals)
-      : {
-          calories: 0,
-          protein: 0,
-          carbs: 0,
-          fat: 0,
-          fiber: 0,
-          sugar: 0,
-          meals: 0,
-        };
+    // Get all meals for the day
+    const mealsSnapshot = await transaction.get(mealsRef);
 
+    // Calculate new totals from all meals
     const newTotals: DailyTotals = {
-      calories: currentTotals.calories + meal.calories,
-      protein: currentTotals.protein + meal.protein,
-      carbs: currentTotals.carbs + meal.carbs,
-      fat: currentTotals.fat + meal.fat,
-      fiber: currentTotals.fiber + meal.fiber,
-      sugar: currentTotals.sugar + meal.sugar,
-      meals: currentTotals.meals + 1,
+      calories: 0,
+      protein: 0,
+      carbs: 0,
+      fat: 0,
+      fiber: 0,
+      sugar: 0,
+      meals: mealsSnapshot.size,
       lastUpdated: new Date().toISOString(),
     };
 
+    // Sum up all meals
+    mealsSnapshot.forEach((doc) => {
+      const mealData = doc.data();
+      newTotals.calories += mealData.calories || 0;
+      newTotals.protein += mealData.protein || 0;
+      newTotals.carbs += mealData.carbs || 0;
+      newTotals.fat += mealData.fat || 0;
+      newTotals.fiber += mealData.fiber || 0;
+      newTotals.sugar += mealData.sugar || 0;
+    });
+
+    // Set the new totals
     transaction.set(dailyTotalsRef, newTotals);
   });
 }
@@ -488,3 +491,34 @@ export const parseMealAdjustment = onRequest(
     });
   }
 );
+
+/**
+ * Cloud Function triggered when a new user is created
+ */
+export const initializeUserGoals = functions.auth
+  .user()
+  .onCreate(async (user: UserRecord) => {
+    try {
+      const defaultGoals = {
+        calories: 2000,
+        protein: 120,
+        carbs: 250,
+        fat: 65,
+      };
+
+      await db
+        .collection("users")
+        .doc(user.uid)
+        .collection("settings")
+        .doc("goals")
+        .set(defaultGoals);
+
+      logger.info("User goals initialized successfully", {
+        userId: user.uid,
+        goals: defaultGoals,
+      });
+    } catch (error) {
+      logger.error("Error initializing user goals:", error);
+      throw error;
+    }
+  });

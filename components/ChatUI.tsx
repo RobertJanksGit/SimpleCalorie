@@ -26,6 +26,7 @@ import {
   getDoc,
   Timestamp,
 } from "firebase/firestore";
+import { useDailyTotals } from "../hooks/useDailyTotals";
 
 // Get screen dimensions
 const { width: screenWidth, height: screenHeight } = Dimensions.get("window");
@@ -90,6 +91,8 @@ export default function ChatUI({
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [currentMealId, setCurrentMealId] = useState<string | null>(null);
   const flatListRef = useRef<FlatList>(null);
+  const { totals, goals, getRemainingCalories, getMacroPercentages } =
+    useDailyTotals(userId);
 
   // Calculate chat height based on keyboard
   const getChatHeight = () => {
@@ -192,89 +195,63 @@ export default function ChatUI({
     }
   }, [messages]);
 
-  const handleSend = async () => {
-    if (inputText.trim() === "" || !userId) return;
+  const handleSendMessage = async () => {
+    if (!inputText.trim() || loading) return;
 
+    setLoading(true);
     const userMessage: Message = {
       id: Date.now().toString(),
-      text: inputText,
+      text: inputText.trim(),
       sender: "user",
       timestamp: new Date(),
     };
 
     setMessages((prev) => [...prev, userMessage]);
     setInputText("");
-    setLoading(true);
 
     try {
-      const date = new Date().toISOString().split("T")[0];
       let responseText = "";
+      const date = new Date().toISOString().split("T")[0];
 
-      // Check if the message is about adjusting the current meal
       if (
-        currentMealId &&
-        (inputText.toLowerCase().includes("add") ||
-          inputText.toLowerCase().includes("remove") ||
-          inputText.toLowerCase().includes("change") ||
-          inputText.toLowerCase().includes("adjust"))
+        inputText.toLowerCase().includes("calories") ||
+        inputText.toLowerCase().includes("progress") ||
+        inputText.toLowerCase().includes("macros")
       ) {
-        try {
-          // Call the meal adjustment Cloud Function
-          const response = await fetch(
-            "https://parsemealadjustment-mx4hdiwmwq-uc.a.run.app",
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Accept: "application/json",
-              },
-              body: JSON.stringify({
-                userId,
-                date,
-                mealId: currentMealId,
-                userInput: inputText,
-              }),
-            }
-          );
+        const remaining = getRemainingCalories();
+        const macroPercentages = getMacroPercentages();
 
-          if (!response.ok) {
-            const errorData = await response
-              .json()
-              .catch(() => ({ error: "Unknown error" }));
-            console.error("Error response from meal adjustment:", errorData);
-            throw new Error(
-              errorData.error || `HTTP error! status: ${response.status}`
-            );
-          }
+        responseText = `You have ${remaining} calories remaining from your ${goals.calories} calorie goal today.\n\n`;
+        responseText += `Macro progress:\n`;
+        responseText += `Protein: ${totals?.protein || 0}g/${goals.protein}g (${
+          macroPercentages.protein
+        }%)\n`;
+        responseText += `Carbs: ${totals?.carbs || 0}g/${goals.carbs}g (${
+          macroPercentages.carbs
+        }%)\n`;
+        responseText += `Fat: ${totals?.fat || 0}g/${goals.fat}g (${
+          macroPercentages.fat
+        }%)\n`;
 
-          const result = await response.json();
-
-          if (!result.success) {
-            throw new Error(result.error || "Failed to adjust meal");
-          }
-
-          const assistantMessage: Message = {
-            id: (Date.now() + 1).toString(),
-            text: result.message,
-            sender: "assistant",
-            timestamp: new Date(),
-            mealId: currentMealId,
-            isAdjustment: true,
-          };
-
-          setMessages((prev) => [...prev, assistantMessage]);
-        } catch (error) {
-          console.error("Error adjusting meal:", error);
-          const errorMessage: Message = {
-            id: (Date.now() + 1).toString(),
-            text: `Sorry, I couldn't adjust the meal: ${
-              error instanceof Error ? error.message : "Unknown error"
-            }. Please try again with different wording.`,
-            sender: "assistant",
-            timestamp: new Date(),
-          };
-          setMessages((prev) => [...prev, errorMessage]);
+        // Add goal-based feedback
+        if (remaining < 200) {
+          responseText += "\nYou're close to your calorie goal for today! 🎯";
+        } else if (remaining < 0) {
+          responseText +=
+            "\nYou've exceeded your calorie goal for today. Consider adjusting your portions for the next meal. 🤔";
+        } else if (remaining > goals.calories * 0.7) {
+          responseText +=
+            "\nYou still have quite a bit to go! Make sure to eat enough to meet your goals. 🍽️";
         }
+
+        const assistantMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          text: responseText,
+          sender: "assistant",
+          timestamp: new Date(),
+        };
+
+        setMessages((prev) => [...prev, assistantMessage]);
       } else if (inputText.toLowerCase().includes("protein")) {
         // Get today's logs for protein
         const logsRef = doc(db, `users/${userId}/logs/${date}`);
@@ -434,7 +411,7 @@ export default function ChatUI({
                   />
                   <TouchableOpacity
                     style={styles.sendButton}
-                    onPress={handleSend}
+                    onPress={handleSendMessage}
                     disabled={loading || inputText.trim() === ""}
                   >
                     <Ionicons
