@@ -216,21 +216,13 @@ export default function ChatUI({
           >
             <View style={[styles.chatContainer, { height: chatHeight }]}>
               <View style={styles.header}>
-                <View style={styles.headerContent}>
-                  <TouchableOpacity
-                    onPress={onClose}
-                    style={styles.closeButton}
-                  >
-                    <View style={styles.closeBar} />
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={onClose}
-                    style={styles.closeXButton}
-                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                  >
-                    <Ionicons name="close" size={24} color="#666" />
-                  </TouchableOpacity>
-                </View>
+                <TouchableOpacity
+                  onPress={onClose}
+                  style={styles.closeButton}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <Ionicons name="close" size={24} color="#666" />
+                </TouchableOpacity>
               </View>
 
               <View style={styles.messageContainer}>
@@ -310,35 +302,17 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
   },
   header: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
     alignItems: "center",
     paddingVertical: 8,
+    paddingHorizontal: 16,
     borderBottomWidth: 1,
     borderBottomColor: "#eee",
   },
-  headerContent: {
-    width: "100%",
-    flexDirection: "row",
-    justifyContent: "center",
-    alignItems: "center",
-    position: "relative",
-  },
   closeButton: {
-    width: 48,
-    height: 24,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  closeBar: {
     width: 32,
-    height: 4,
-    backgroundColor: "#ddd",
-    borderRadius: 2,
-  },
-  closeXButton: {
-    position: "absolute",
-    right: 16,
-    top: 0,
-    bottom: 0,
+    height: 32,
     justifyContent: "center",
     alignItems: "center",
   },
