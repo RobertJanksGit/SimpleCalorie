@@ -64,6 +64,9 @@ export default {
       FIREBASE_MESSAGING_SENDER_ID: process.env.FIREBASE_MESSAGING_SENDER_ID,
       FIREBASE_APP_ID: process.env.FIREBASE_APP_ID,
       FIREBASE_CLIENT_ID: process.env.FIREBASE_CLIENT_ID,
+      eas: {
+        projectId: "your-project-id",
+      },
     },
   },
 };

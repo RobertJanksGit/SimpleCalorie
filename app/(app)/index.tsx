@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -11,7 +11,7 @@ import {
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import { PhotoService } from "../../services/PhotoService";
 import { useAuth } from "../../contexts/AuthContext";
@@ -68,11 +68,26 @@ interface Meal {
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
+  const { photoTaken: photoTakenParam, showChat: showChatParam } =
+    useLocalSearchParams<{
+      photoTaken: string;
+      showChat: string;
+    }>();
   const [photoTaken, setPhotoTaken] = useState(false);
   const [isChatVisible, setIsChatVisible] = useState(false);
   const percentageComplete = Math.round(
     (dailySummary.caloriesRemaining / dailySummary.caloriesGoal) * 100
   );
+
+  // Handle URL parameters
+  useEffect(() => {
+    if (photoTakenParam === "true") {
+      setPhotoTaken(true);
+    }
+    if (showChatParam === "true") {
+      setIsChatVisible(true);
+    }
+  }, [photoTakenParam, showChatParam]);
 
   const handleOpenChat = () => {
     console.log("Opening chat...");
@@ -111,6 +126,10 @@ export default function HomeScreen() {
           user.uid,
           "upload"
         );
+
+        // Set photoTaken to true and show chat
+        setPhotoTaken(true);
+        setIsChatVisible(true);
 
         // Navigate back after successful upload
         router.back();

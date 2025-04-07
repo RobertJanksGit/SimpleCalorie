@@ -11,9 +11,21 @@ import {
   TouchableWithoutFeedback,
   Keyboard,
   KeyboardEvent,
+  ViewStyle,
+  TextStyle,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import firestore from "@react-native-firebase/firestore";
+import { db } from "../firebaseConfig";
+import {
+  collection,
+  query,
+  orderBy,
+  limit,
+  getDocs,
+  doc,
+  getDoc,
+  Timestamp,
+} from "firebase/firestore";
 
 // Get screen dimensions
 const { width: screenWidth, height: screenHeight } = Dimensions.get("window");
@@ -21,12 +33,14 @@ const { width: screenWidth, height: screenHeight } = Dimensions.get("window");
 // Default chat height (about 60% of screen height)
 const DEFAULT_CHAT_HEIGHT = Math.min(screenHeight * 0.5, 400);
 
-type Message = {
+interface Message {
   id: string;
   text: string;
   sender: "user" | "assistant";
   timestamp: Date;
-};
+  mealId?: string;
+  isAdjustment?: boolean;
+}
 
 interface ChatUIProps {
   isVisible: boolean;
@@ -34,6 +48,35 @@ interface ChatUIProps {
   userId?: string;
   showPhotoConfirmation?: boolean;
 }
+
+type ChatStyles = {
+  overlay: ViewStyle;
+  chatWrapper: ViewStyle;
+  chatContainer: ViewStyle;
+  header: ViewStyle;
+  closeButton: ViewStyle;
+  messageContainer: ViewStyle;
+  messageList: ViewStyle;
+  messageRow: ViewStyle;
+  messageBubble: ViewStyle;
+  userBubble: ViewStyle;
+  assistantBubble: ViewStyle;
+  messageText: TextStyle;
+  userText: TextStyle;
+  assistantText: TextStyle;
+  assistantAvatar: ViewStyle;
+  avatarImage: ViewStyle;
+  avatarHead: ViewStyle;
+  userAvatar: ViewStyle;
+  inputContainer: ViewStyle;
+  inputWrapper: ViewStyle;
+  input: TextStyle;
+  sendButton: ViewStyle;
+  analysisBubble: ViewStyle;
+  analysisText: TextStyle;
+  adjustmentBubble: ViewStyle;
+  adjustmentText: TextStyle;
+};
 
 export default function ChatUI({
   isVisible,
@@ -45,24 +88,8 @@ export default function ChatUI({
   const [inputText, setInputText] = useState("");
   const [loading, setLoading] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [currentMealId, setCurrentMealId] = useState<string | null>(null);
   const flatListRef = useRef<FlatList>(null);
-
-  // Mock nutritional data that would normally come from Firestore
-  const mockNutritionalData = {
-    caloriesRemaining: 1370,
-    caloriesGoal: 2000,
-    percentRemaining: 69,
-    protein: {
-      current: 59,
-      goal: 120,
-      percent: 49,
-    },
-    carbs: {
-      current: 35,
-      goal: 250,
-      percent: 14,
-    },
-  };
 
   // Calculate chat height based on keyboard
   const getChatHeight = () => {
@@ -97,27 +124,65 @@ export default function ChatUI({
   }, []);
 
   useEffect(() => {
-    // Initial welcome message
-    const initialMessages: Message[] = [
-      {
-        id: "1",
-        text: "Hello! How can I assist you with your nutrition today?",
-        sender: "assistant",
-        timestamp: new Date(),
-      },
-    ];
+    const fetchLatestMealAnalysis = async () => {
+      if (!showPhotoConfirmation || !userId) return;
 
-    // Add photo confirmation message if specified
-    if (showPhotoConfirmation) {
-      initialMessages.push({
-        id: "2",
-        text: "I've logged your meal! Added 300 calories, 25g protein, and 15g carbs to your daily total.",
-        sender: "assistant",
-        timestamp: new Date(),
-      });
-    }
+      try {
+        const date = new Date().toISOString().split("T")[0];
+        const mealsPath = `users/${userId}/logs/${date}/meals`;
+        const mealsRef = collection(db, mealsPath);
 
-    setMessages(initialMessages);
+        // Get the most recent meal
+        const q = query(mealsRef, orderBy("timestamp", "desc"), limit(1));
+        const snapshot = await getDocs(q);
+
+        if (!snapshot.empty) {
+          const mealDoc = snapshot.docs[0];
+          const mealData = mealDoc.data();
+          setCurrentMealId(mealDoc.id);
+          const analysisMessage = `I've logged your meal! Added ${mealData.calories} calories, ${mealData.protein}g protein, ${mealData.carbs}g carbs, and ${mealData.fat}g fat to your daily total.`;
+
+          // Set initial messages with the analysis
+          setMessages([
+            {
+              id: "1",
+              text: "Hello! How can I assist you with your nutrition today?",
+              sender: "assistant",
+              timestamp: new Date(),
+            },
+            {
+              id: "2",
+              text: analysisMessage,
+              sender: "assistant",
+              timestamp: new Date(),
+              mealId: mealDoc.id,
+            },
+          ]);
+        } else {
+          console.log("No meals found in collection:", mealsPath);
+          setMessages([
+            {
+              id: "1",
+              text: "Hello! How can I assist you with your nutrition today?",
+              sender: "assistant",
+              timestamp: new Date(),
+            },
+          ]);
+        }
+      } catch (error) {
+        console.error("Error fetching meal analysis:", error);
+        setMessages([
+          {
+            id: "1",
+            text: "Hello! How can I assist you with your nutrition today?",
+            sender: "assistant",
+            timestamp: new Date(),
+          },
+        ]);
+      }
+    };
+
+    fetchLatestMealAnalysis();
   }, [userId, showPhotoConfirmation]);
 
   // Scroll to bottom when new messages are added
@@ -127,48 +192,158 @@ export default function ChatUI({
     }
   }, [messages]);
 
-  const handleSend = () => {
-    if (inputText.trim() === "") return;
+  const handleSend = async () => {
+    if (inputText.trim() === "" || !userId) return;
 
-    const newUserMessage: Message = {
+    const userMessage: Message = {
       id: Date.now().toString(),
       text: inputText,
       sender: "user",
       timestamp: new Date(),
     };
 
-    setMessages([...messages, newUserMessage]);
+    setMessages((prev) => [...prev, userMessage]);
     setInputText("");
     setLoading(true);
 
-    // Simulate response delay
-    setTimeout(() => {
+    try {
+      const date = new Date().toISOString().split("T")[0];
       let responseText = "";
 
-      if (inputText.toLowerCase().includes("protein")) {
-        responseText =
-          "Good sources of protein include chicken, eggs, tofu, greek yogurt, lentils, and whey protein. You currently have 59g of 120g protein goal for today.";
-      } else if (inputText.toLowerCase().includes("calories")) {
-        responseText = `You have ${mockNutritionalData.caloriesRemaining} calories remaining from your ${mockNutritionalData.caloriesGoal} calorie goal today.`;
-      } else {
-        responseText =
-          "I can help you track your nutrition. Ask me about your calories, macros, or for nutrition suggestions!";
-      }
+      // Check if the message is about adjusting the current meal
+      if (
+        currentMealId &&
+        (inputText.toLowerCase().includes("add") ||
+          inputText.toLowerCase().includes("remove") ||
+          inputText.toLowerCase().includes("change") ||
+          inputText.toLowerCase().includes("adjust"))
+      ) {
+        try {
+          // Call the meal adjustment Cloud Function
+          const response = await fetch(
+            "https://parsemealadjustment-mx4hdiwmwq-uc.a.run.app",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Accept: "application/json",
+              },
+              body: JSON.stringify({
+                userId,
+                date,
+                mealId: currentMealId,
+                userInput: inputText,
+              }),
+            }
+          );
 
-      const newAssistantMessage: Message = {
+          if (!response.ok) {
+            const errorData = await response
+              .json()
+              .catch(() => ({ error: "Unknown error" }));
+            console.error("Error response from meal adjustment:", errorData);
+            throw new Error(
+              errorData.error || `HTTP error! status: ${response.status}`
+            );
+          }
+
+          const result = await response.json();
+
+          if (!result.success) {
+            throw new Error(result.error || "Failed to adjust meal");
+          }
+
+          const assistantMessage: Message = {
+            id: (Date.now() + 1).toString(),
+            text: result.message,
+            sender: "assistant",
+            timestamp: new Date(),
+            mealId: currentMealId,
+            isAdjustment: true,
+          };
+
+          setMessages((prev) => [...prev, assistantMessage]);
+        } catch (error) {
+          console.error("Error adjusting meal:", error);
+          const errorMessage: Message = {
+            id: (Date.now() + 1).toString(),
+            text: `Sorry, I couldn't adjust the meal: ${
+              error instanceof Error ? error.message : "Unknown error"
+            }. Please try again with different wording.`,
+            sender: "assistant",
+            timestamp: new Date(),
+          };
+          setMessages((prev) => [...prev, errorMessage]);
+        }
+      } else if (inputText.toLowerCase().includes("protein")) {
+        // Get today's logs for protein
+        const logsRef = doc(db, `users/${userId}/logs/${date}`);
+        const logsSnap = await getDoc(logsRef);
+        const dailyData = logsSnap.data() || {
+          protein: { current: 0, goal: 120 },
+        };
+
+        responseText = `You've consumed ${dailyData.protein.current}g out of your ${dailyData.protein.goal}g protein goal today. Good sources of protein include chicken, eggs, tofu, greek yogurt, lentils, and whey protein.`;
+
+        const assistantMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          text: responseText,
+          sender: "assistant",
+          timestamp: new Date(),
+        };
+
+        setMessages((prev) => [...prev, assistantMessage]);
+      } else if (inputText.toLowerCase().includes("calories")) {
+        // Get today's logs for calories
+        const logsRef = doc(db, `users/${userId}/logs/${date}`);
+        const logsSnap = await getDoc(logsRef);
+        const dailyData = logsSnap.data() || {
+          calories: { current: 0, goal: 2000 },
+        };
+
+        const remaining = dailyData.calories.goal - dailyData.calories.current;
+        responseText = `You have ${remaining} calories remaining from your ${dailyData.calories.goal} calorie goal today.`;
+
+        const assistantMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          text: responseText,
+          sender: "assistant",
+          timestamp: new Date(),
+        };
+
+        setMessages((prev) => [...prev, assistantMessage]);
+      } else {
+        responseText = currentMealId
+          ? "I can help you adjust this meal. Try saying something like 'add 2 tbsp olive oil' or 'change protein to 30g'."
+          : "I can help you track your nutrition. Ask me about your calories, macros, or for nutrition suggestions!";
+
+        const assistantMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          text: responseText,
+          sender: "assistant",
+          timestamp: new Date(),
+        };
+
+        setMessages((prev) => [...prev, assistantMessage]);
+      }
+    } catch (error) {
+      console.error("Error processing message:", error);
+      const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
-        text: responseText,
+        text: "Sorry, I had trouble processing your request. Please try again.",
         sender: "assistant",
         timestamp: new Date(),
       };
-
-      setMessages((prev) => [...prev, newAssistantMessage]);
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
       setLoading(false);
-    }, 1000);
+    }
   };
 
   const renderItem = ({ item }: { item: Message }) => {
     const isUser = item.sender === "user";
+    const isAnalysis = !isUser && item.text.includes("logged your meal");
+    const isAdjustment = !isUser && item.isAdjustment;
 
     return (
       <View style={styles.messageRow}>
@@ -183,12 +358,16 @@ export default function ChatUI({
           style={[
             styles.messageBubble,
             isUser ? styles.userBubble : styles.assistantBubble,
+            isAnalysis && styles.analysisBubble,
+            isAdjustment && styles.adjustmentBubble,
           ]}
         >
           <Text
             style={[
               styles.messageText,
               isUser ? styles.userText : styles.assistantText,
+              isAnalysis && styles.analysisText,
+              isAdjustment && styles.adjustmentText,
             ]}
           >
             {item.text}
@@ -276,7 +455,7 @@ export default function ChatUI({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create<ChatStyles>({
   overlay: {
     position: "absolute",
     top: 0,
@@ -418,5 +597,25 @@ const styles = StyleSheet.create({
     backgroundColor: "#4CAF50",
     justifyContent: "center",
     alignItems: "center",
+  },
+  analysisBubble: {
+    backgroundColor: "#ecfdf5", // Tailwind green-50
+    borderWidth: 1,
+    borderColor: "#059669", // Tailwind green-600
+  },
+  analysisText: {
+    color: "#059669", // Tailwind green-600
+    fontWeight: "600",
+    fontSize: 16,
+  },
+  adjustmentBubble: {
+    backgroundColor: "#f0f9ff", // Tailwind blue-50
+    borderWidth: 1,
+    borderColor: "#3b82f6", // Tailwind blue-500
+  },
+  adjustmentText: {
+    color: "#3b82f6", // Tailwind blue-500
+    fontWeight: "600",
+    fontSize: 16,
   },
 });

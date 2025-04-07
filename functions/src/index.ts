@@ -15,6 +15,7 @@ import * as logger from "firebase-functions/logger";
 import { defineSecret } from "firebase-functions/params";
 import OpenAI from "openai";
 import * as admin from "firebase-admin";
+import * as cors from "cors";
 
 // Start writing functions
 // https://firebase.google.com/docs/functions/typescript
@@ -32,6 +33,9 @@ const db = getFirestore();
 
 // Define OpenAI API key secret
 const openaiApiKey = defineSecret("OPENAI_API_KEY");
+
+// Initialize CORS middleware
+const corsHandler = cors({ origin: true });
 
 interface FoodAnalysis {
   foodName: string;
@@ -83,11 +87,11 @@ async function analyzeFoodPhoto(storagePath: string): Promise<FoodAnalysis> {
     const base64Image = buffer.toString("base64");
 
     const openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
+      apiKey: openaiApiKey.value(),
     });
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
@@ -305,3 +309,182 @@ async function updateDailyTotals(
     transaction.set(dailyTotalsRef, newTotals);
   });
 }
+
+/**
+ * Cloud Function to parse user input for meal adjustments
+ */
+export const parseMealAdjustment = onRequest(
+  {
+    region: "us-central1",
+    memory: "256MiB",
+    timeoutSeconds: 60,
+    minInstances: 0,
+    maxInstances: 10,
+    secrets: [openaiApiKey],
+  },
+  async (req, res) => {
+    // Handle CORS
+    return corsHandler(req, res, async () => {
+      try {
+        if (req.method !== "POST") {
+          res.status(405).send("Method not allowed");
+          return;
+        }
+
+        const { userId, date, mealId, userInput } = req.body;
+
+        if (!userId || !date || !mealId || !userInput) {
+          res.status(400).send("Missing required parameters");
+          return;
+        }
+
+        // Initialize OpenAI with the secret
+        const openai = new OpenAI({
+          apiKey: openaiApiKey.value(),
+        });
+
+        // Add debug logging
+        logger.info("Processing meal adjustment", {
+          userId,
+          date,
+          mealId,
+          userInput,
+        });
+
+        // Use OpenAI to parse the user input
+        const completion = await openai.chat.completions.create({
+          model: "gpt-4o-mini",
+          messages: [
+            {
+              role: "system",
+              content: `You are a nutrition tracking assistant. Parse user input for meal adjustments.
+              You must respond with ONLY a JSON object in this exact format (no other text):
+              {
+                "adjustments": {
+                  "calories": number or null,
+                  "protein": number or null,
+                  "carbs": number or null,
+                  "fat": number or null
+                },
+                "description": "A clear description of the adjustment"
+              }
+              Only include nutrients that are being adjusted. Numbers should be positive integers.
+              Example user input: "add 2 tbsp olive oil"
+              Example response: {"adjustments":{"calories":240,"fat":28},"description":"Added 2 tablespoons of olive oil (+240 calories, +28g fat)"}`,
+            },
+            {
+              role: "user",
+              content: userInput,
+            },
+          ],
+          temperature: 0.1,
+        });
+
+        const content = completion.choices[0].message.content;
+        if (!content) {
+          throw new Error("No content received from OpenAI");
+        }
+
+        // Add debug logging
+        logger.info("OpenAI response received", { content });
+
+        let parsedAdjustment;
+        try {
+          parsedAdjustment = JSON.parse(content.trim());
+
+          // Validate the response format
+          if (!parsedAdjustment.adjustments || !parsedAdjustment.description) {
+            throw new Error("Invalid response format from OpenAI");
+          }
+
+          // Ensure all adjustment values are numbers or null
+          const adjustmentValues = parsedAdjustment.adjustments;
+          for (const [key, value] of Object.entries(adjustmentValues)) {
+            if (value !== null && typeof value !== "number") {
+              adjustmentValues[key] = parseFloat(value as string) || null;
+            }
+          }
+          parsedAdjustment.adjustments = adjustmentValues;
+        } catch (error) {
+          logger.error("Failed to parse OpenAI response:", { content, error });
+          throw new Error("Failed to parse meal adjustment");
+        }
+
+        // Get the meal reference
+        const mealRef = db
+          .collection("users")
+          .doc(userId)
+          .collection("logs")
+          .doc(date)
+          .collection("meals")
+          .doc(mealId);
+
+        // Get the current meal data
+        const mealDoc = await mealRef.get();
+        if (!mealDoc.exists) {
+          res.status(404).send("Meal not found");
+          return;
+        }
+
+        const mealData = mealDoc.data();
+        const adjustments = parsedAdjustment.adjustments;
+
+        // Add debug logging
+        logger.info("Current meal data", { mealData });
+        logger.info("Applying adjustments", { adjustments });
+
+        // Update the meal with adjustments
+        const updates: any = {};
+        if (adjustments.calories !== null)
+          updates.calories = adjustments.calories;
+        if (adjustments.protein !== null) updates.protein = adjustments.protein;
+        if (adjustments.carbs !== null) updates.carbs = adjustments.carbs;
+        if (adjustments.fat !== null) updates.fat = adjustments.fat;
+        updates.lastUpdated = admin.firestore.FieldValue.serverTimestamp();
+
+        // Use ISO string for timestamp in array
+        const now = new Date().toISOString();
+        updates.adjustmentHistory = admin.firestore.FieldValue.arrayUnion({
+          timestamp: now,
+          description: parsedAdjustment.description,
+          adjustments,
+        });
+
+        // Update the meal document
+        await mealRef.update(updates);
+
+        // Update daily totals
+        await updateDailyTotals(userId, date, {
+          ...mealData,
+          ...updates,
+        } as FoodAnalysis);
+
+        // Add debug logging
+        logger.info("Meal adjustment completed successfully", {
+          updates,
+          description: parsedAdjustment.description,
+        });
+
+        res.status(200).json({
+          success: true,
+          message: parsedAdjustment.description,
+          adjustments,
+        });
+      } catch (error) {
+        // Enhanced error logging
+        logger.error("Error in parseMealAdjustment:", {
+          error: error instanceof Error ? error.message : "Unknown error",
+          stack: error instanceof Error ? error.stack : undefined,
+        });
+
+        res.status(500).json({
+          success: false,
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to process meal adjustment",
+        });
+      }
+    });
+  }
+);

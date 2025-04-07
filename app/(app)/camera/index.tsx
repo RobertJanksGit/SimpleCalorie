@@ -72,7 +72,12 @@ export default function CameraScreen() {
         // Upload the photo using PhotoService
         const photoService = PhotoService.getInstance();
         await photoService.retryUpload(photo.uri, user.uid, selectedMealType);
-        router.back();
+
+        // Navigate back and show analysis in chat
+        router.push({
+          pathname: "/",
+          params: { photoTaken: "true", showChat: "true" },
+        });
       } catch (error) {
         console.error("Error uploading photo:", error);
         Alert.alert(
