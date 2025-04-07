@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   View,
   Text,
@@ -15,6 +15,7 @@ import { router } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import { PhotoService } from "../../services/PhotoService";
 import { useAuth } from "../../contexts/AuthContext";
+import ChatUI from "../../components/ChatUI";
 
 // Mock data - replace with real data later
 const dailySummary = {
@@ -67,9 +68,21 @@ interface Meal {
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
+  const [photoTaken, setPhotoTaken] = useState(false);
+  const [isChatVisible, setIsChatVisible] = useState(false);
   const percentageComplete = Math.round(
     (dailySummary.caloriesRemaining / dailySummary.caloriesGoal) * 100
   );
+
+  const handleOpenChat = () => {
+    console.log("Opening chat...");
+    setIsChatVisible(true);
+  };
+
+  const handleCloseChat = () => {
+    console.log("Closing chat...");
+    setIsChatVisible(false);
+  };
 
   const handleUploadMeal = async () => {
     try {
@@ -203,7 +216,11 @@ export default function HomeScreen() {
           <Ionicons name="time-outline" size={24} color="#666" />
           <Text style={styles.tabText}>History</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.tabItem, styles.chatTab]}>
+        <TouchableOpacity
+          style={[styles.tabItem, styles.chatTab]}
+          onPress={handleOpenChat}
+          activeOpacity={0.7}
+        >
           <View style={styles.chatButton}>
             <Ionicons name="chatbubble" size={24} color="white" />
           </View>
@@ -217,6 +234,13 @@ export default function HomeScreen() {
           <Text style={styles.tabText}>Profile</Text>
         </TouchableOpacity>
       </View>
+
+      <ChatUI
+        isVisible={isChatVisible}
+        onClose={handleCloseChat}
+        userId={user?.uid || "testUser"}
+        showPhotoConfirmation={photoTaken}
+      />
     </View>
   );
 }
