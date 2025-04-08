@@ -63,6 +63,14 @@ interface ChatUIProps {
   showPhotoConfirmation?: boolean;
 }
 
+interface ChatResponse {
+  response: string;
+  timestamp: string;
+  context: {
+    date: string;
+  };
+}
+
 type ChatStyles = {
   overlay: ViewStyle;
   chatWrapper: ViewStyle;
@@ -183,6 +191,7 @@ export default function ChatUI({
   const [permissionError, setPermissionError] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [isTyping, setIsTyping] = useState(false);
+  const [showWelcome, setShowWelcome] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const { totals, goals } = useDailyTotals(userId);
   const { user, isAuthenticated } = useAuth();
@@ -248,31 +257,32 @@ export default function ChatUI({
         console.log(`[ChatUI] Received ${snapshot.docs.length} messages`);
         const newMessages: Message[] = snapshot.docs.map((doc) => ({
           id: doc.id,
-          ...(doc.data() as Omit<Message, "id">),
-        }));
+          ...doc.data(),
+        })) as Message[];
+
+        // Sort messages by timestamp and then by sender (user messages before AI for same timestamp)
+        newMessages.sort((a, b) => {
+          const timeCompare =
+            new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+          if (timeCompare === 0) {
+            // If timestamps are equal, show user message first
+            return a.sender === "user" ? -1 : 1;
+          }
+          return timeCompare;
+        });
+
         setMessages(newMessages);
         setInitialLoading(false);
+
+        // Scroll to bottom on new messages
+        setTimeout(() => {
+          flatListRef.current?.scrollToEnd({ animated: true });
+        }, 100);
       },
       (error) => {
-        console.error("Error fetching chat messages:", error);
-        console.error(
-          `[ChatUI] Document path: users/${authenticatedUserId}/chatHistory`
-        );
-        const auth = getAuth();
-        console.error(
-          `[ChatUI] Auth state:`,
-          !!auth.currentUser,
-          "User ID:",
-          auth.currentUser?.uid
-        );
-        console.error(
-          `[ChatUI] Context auth state:`,
-          isAuthenticated,
-          "User ID:",
-          user?.uid
-        );
-        setInitialLoading(false);
+        console.error("Error fetching chat history:", error);
         setPermissionError(true);
+        setInitialLoading(false);
       }
     );
 
@@ -321,100 +331,92 @@ export default function ChatUI({
   useEffect(() => {
     if (isVisible && !initialLoading && messages.length === 0) {
       setIsTyping(true);
+      setShowWelcome(false);
 
-      // Hide typing indicator after a delay if no messages arrive
+      // Hide typing indicator after a delay and show welcome message
       const timer = setTimeout(() => {
         setIsTyping(false);
-      }, 3000);
+        setShowWelcome(true);
+      }, 2000);
 
       return () => clearTimeout(timer);
     }
   }, [isVisible, initialLoading, messages.length]);
 
-  const handleSendMessage = async () => {
-    if (!inputText.trim() || loading) return;
-
-    // Check if user is authenticated
-    if (!isAuthenticated) {
-      alert("You must be logged in to use the chat feature.");
-      return;
+  // Reset welcome state when chat becomes invisible
+  useEffect(() => {
+    if (!isVisible) {
+      setShowWelcome(false);
     }
+  }, [isVisible]);
 
-    setLoading(true);
-    setIsTyping(true);
-    const userMessage = inputText.trim();
+  const handleSendMessage = async () => {
+    if (!inputText.trim() || !authenticatedUserId) return;
+
+    const messageText = inputText.trim();
     setInputText("");
-
-    // Log authentication state
-    console.log(`[ChatUI] Sending message as user: ${authenticatedUserId}`);
-    console.log(`[ChatUI] Authentication status: ${isAuthenticated}`);
-
-    // Set a timeout to hide the typing indicator after 20 seconds
-    const typingTimeout = setTimeout(() => {
-      setIsTyping(false);
-    }, 20000);
+    setIsTyping(true);
 
     try {
-      // Try writing directly to Firestore first as a test
       const today = new Date().toISOString().split("T")[0];
-      const chatRef = collection(
-        db,
-        `users/${authenticatedUserId}/chatHistory`
-      );
+      const userMessageId = `${Date.now()}-user`;
+      const aiMessageId = `${Date.now()}-ai`;
 
-      // Attempt direct write (bypassing cloud function) to test permissions
-      try {
-        const directMessage = {
-          message: userMessage,
-          sender: "user",
-          timestamp: new Date().toISOString(),
-          context: {
-            date: today,
-          },
-        };
+      // Optimistically add user's message immediately
+      const userMessage: Message = {
+        id: userMessageId,
+        message: messageText,
+        sender: "user",
+        timestamp: new Date().toISOString(),
+        context: { date: today },
+      };
 
-        await addDoc(chatRef, directMessage);
-        console.log(`[ChatUI] Successfully wrote user message directly`);
-      } catch (directWriteError) {
-        console.error(`[ChatUI] Direct write failed:`, directWriteError);
-        // Continue to try the cloud function even if direct write fails
+      // Update local state immediately
+      setMessages((prevMessages) => [...prevMessages, userMessage]);
+
+      // Scroll to bottom
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: true });
+      }, 100);
+
+      // Call the cloud function
+      const result = (await chatWithAI({
+        message: messageText,
+      })) as { data: ChatResponse };
+
+      if (!result.data) {
+        throw new Error("No response from AI");
       }
 
-      // Call the chatWithAI function
-      console.log(
-        `[ChatUI] Calling cloud function with message: ${userMessage.substring(
-          0,
-          20
-        )}...`
-      );
-      const result = await chatWithAI({ message: userMessage });
-      console.log(`[ChatUI] Cloud function response:`, result.data);
+      // Add AI's response to local state
+      const aiMessage: Message = {
+        id: aiMessageId,
+        message: result.data.response,
+        sender: "ai",
+        timestamp: result.data.timestamp,
+        context: { date: today },
+      };
 
-      // Response will be handled by the Firestore listener
+      setMessages((prevMessages) => [...prevMessages, aiMessage]);
+
+      // Scroll to bottom again after AI response
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: true });
+      }, 100);
     } catch (error) {
       console.error("Error sending message:", error);
-
-      // Try to get more detailed error information
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      const errorDetails = JSON.stringify(error, null, 2);
-      console.error(`[ChatUI] Error details: ${errorMessage}`);
-      console.error(`[ChatUI] Full error: ${errorDetails}`);
-
-      // Add error message locally
-      const errorMsg: Message = {
-        id: Date.now().toString(),
-        message: `Sorry, I encountered an error: ${errorMessage}. Please try again or check your connection.`,
-        sender: "ai",
-        timestamp: new Date().toISOString(),
-        context: {
-          date: new Date().toISOString().split("T")[0],
+      // Show error to user
+      setMessages((prevMessages) => [
+        ...prevMessages,
+        {
+          id: Date.now().toString(),
+          message: "Sorry, I encountered an error. Please try again.",
+          sender: "ai",
+          timestamp: new Date().toISOString(),
+          context: { date: new Date().toISOString().split("T")[0] },
         },
-      };
-      setMessages((prev) => [...prev, errorMsg]);
+      ]);
     } finally {
-      clearTimeout(typingTimeout);
-      setLoading(false);
       setIsTyping(false);
     }
   };
@@ -572,26 +574,28 @@ export default function ChatUI({
                     isTyping ? <TypingIndicator isVisible={true} /> : null
                   }
                   ListEmptyComponent={
-                    <View style={styles.emptyContainer}>
-                      <View style={styles.assistantAvatar}>
-                        <View style={styles.avatarImage}>
-                          <View style={styles.avatarHead} />
+                    showWelcome ? (
+                      <View style={styles.emptyContainer}>
+                        <View style={styles.assistantAvatar}>
+                          <View style={styles.avatarImage}>
+                            <View style={styles.avatarHead} />
+                          </View>
+                        </View>
+                        <View
+                          style={[
+                            styles.messageBubble,
+                            styles.assistantBubble,
+                            styles.welcomeBubble,
+                          ]}
+                        >
+                          <Text style={styles.messageText}>
+                            Hi there! I'm your nutrition assistant. Ask me about
+                            your calories, macros, or for meal suggestions based
+                            on your nutritional goals.
+                          </Text>
                         </View>
                       </View>
-                      <View
-                        style={[
-                          styles.messageBubble,
-                          styles.assistantBubble,
-                          styles.welcomeBubble,
-                        ]}
-                      >
-                        <Text style={styles.messageText}>
-                          Hi there! I'm your nutrition assistant. Ask me about
-                          your calories, macros, or for meal suggestions based
-                          on your nutritional goals.
-                        </Text>
-                      </View>
-                    </View>
+                    ) : null
                   }
                   onContentSizeChange={() => {
                     flatListRef.current?.scrollToEnd({ animated: true });

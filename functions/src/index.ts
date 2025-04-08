@@ -792,8 +792,9 @@ Avoid making health claims without scientific backing.`,
         throw new Error("No response received from AI");
       }
 
-      // Create timestamps
-      const timestamp = new Date().toISOString();
+      // Create timestamps with a 1ms difference to ensure correct ordering
+      const userTimestamp = new Date().toISOString();
+      const aiTimestamp = new Date(new Date().getTime() + 1).toISOString();
 
       // Save user message to chatHistory
       const userChatRef = db
@@ -805,7 +806,7 @@ Avoid making health claims without scientific backing.`,
       const userChatMessage: ChatMessage = {
         message: userMessage,
         sender: "user",
-        timestamp,
+        timestamp: userTimestamp,
         context: { date: today },
       };
 
@@ -819,7 +820,7 @@ Avoid making health claims without scientific backing.`,
       const aiChatMessage: ChatMessage = {
         message: aiResponse,
         sender: "ai",
-        timestamp,
+        timestamp: aiTimestamp,
         context: { date: today },
       };
 
@@ -839,7 +840,7 @@ Avoid making health claims without scientific backing.`,
       // Return the AI response
       return {
         response: aiResponse,
-        timestamp,
+        timestamp: aiTimestamp,
         context: { date: today },
       };
     } catch (error) {

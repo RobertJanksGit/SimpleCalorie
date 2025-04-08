@@ -10,6 +10,9 @@ import {
   Modal,
   Image,
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  FlatList,
 } from "react-native";
 import {
   SafeAreaView,
