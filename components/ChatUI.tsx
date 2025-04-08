@@ -22,13 +22,19 @@ import {
   collection,
   query,
   orderBy,
-  limit,
-  getDocs,
-  doc,
-  getDoc,
+  where,
+  onSnapshot,
   Timestamp,
+  doc,
+  setDoc,
+  serverTimestamp,
+  addDoc,
 } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
 import { useDailyTotals } from "../hooks/useDailyTotals";
+import { getFunctions, httpsCallable } from "firebase/functions";
+import { useAuth } from "../contexts/AuthContext";
+import { useRouter } from "expo-router";
 
 // Get screen dimensions
 const { width: screenWidth, height: screenHeight } = Dimensions.get("window");
@@ -38,11 +44,12 @@ const DEFAULT_CHAT_HEIGHT = Math.min(screenHeight * 0.5, 400);
 
 interface Message {
   id: string;
-  text: string;
-  sender: "user" | "assistant";
-  timestamp: Date;
-  mealId?: string;
-  isAdjustment?: boolean;
+  message: string;
+  sender: "user" | "ai";
+  timestamp: string;
+  context: {
+    date: string;
+  };
 }
 
 interface TypingIndicatorProps {
@@ -79,12 +86,12 @@ type ChatStyles = {
   inputWrapper: ViewStyle;
   input: TextStyle;
   sendButton: ViewStyle;
-  analysisBubble: ViewStyle;
-  analysisText: TextStyle;
-  adjustmentBubble: ViewStyle;
-  adjustmentText: TextStyle;
-  nutritionBubble: ViewStyle;
-  nutritionText: TextStyle;
+  emptyContainer: ViewStyle;
+  welcomeBubble: ViewStyle;
+  errorContainer: ViewStyle;
+  errorText: TextStyle;
+  retryButton: ViewStyle;
+  retryButtonText: TextStyle;
 };
 
 const TypingIndicator = ({ isVisible }: TypingIndicatorProps) => {
@@ -172,119 +179,105 @@ export default function ChatUI({
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState("");
   const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [permissionError, setPermissionError] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
-  const [currentMealId, setCurrentMealId] = useState<string | null>(null);
   const [isTyping, setIsTyping] = useState(false);
   const flatListRef = useRef<FlatList>(null);
-  const { totals, goals, getRemainingCalories, getMacroPercentages } =
-    useDailyTotals(userId);
+  const { totals, goals } = useDailyTotals(userId);
+  const { user, isAuthenticated } = useAuth();
+  const router = useRouter();
 
-  // Helper function to add a message with delay
-  const addMessageWithDelay = async (message: Message, delay: number) => {
-    setIsTyping(true);
-    await new Promise((resolve) => setTimeout(resolve, delay));
-    setIsTyping(false);
-    setMessages((prev) => [...prev, message]);
-  };
+  // Use the authenticated user's ID instead of the passed userId if available
+  const authenticatedUserId = user?.uid || userId;
 
-  // Function to simulate typing delay based on message length
-  const getTypingDelay = (text: string) => {
-    // Average typing speed (characters per minute)
-    const typingSpeed = 800;
-    // Minimum delay of 500ms, plus additional time based on message length
-    return Math.min(Math.max(500, text.length * (60000 / typingSpeed)), 2000);
-  };
+  // Initialize Firebase Functions
+  const functions = getFunctions();
+  const chatWithAI = httpsCallable(functions, "chatWithAI");
 
-  // Function to generate daily summary message
-  const generateDailySummary = () => {
-    const remaining = getRemainingCalories();
-    const macroPercentages = getMacroPercentages();
-
-    let summaryText = `📊 Here's how your day looks:\n\n`;
-    summaryText += `🎯 Calories: ${totals?.calories || 0} / ${
-      goals.calories
-    }\n`;
-    summaryText += `${remaining > 0 ? "⬇️" : "⬆️"} ${Math.abs(
-      remaining
-    )} calories ${remaining > 0 ? "remaining" : "over"}\n\n`;
-
-    summaryText += `💪 Macronutrients:\n\n`;
-    summaryText += `🥩 Protein: ${totals?.protein || 0}g / ${goals.protein}g\n`;
-    summaryText += `🌾 Carbs: ${totals?.carbs || 0}g / ${goals.carbs}g\n`;
-    summaryText += `🥑 Fat: ${totals?.fat || 0}g / ${goals.fat}g\n\n`;
-
-    // Add contextual feedback
-    if (remaining < 200 && remaining > 0) {
-      summaryText += "🎯 You're almost at your calorie goal for today!";
-    } else if (remaining <= 0) {
-      summaryText += "⚠️ You've reached your calorie goal for today.";
-    } else if (remaining > goals.calories * 0.7) {
-      summaryText += "📝 Still plenty of room in your calorie budget.";
-    } else {
-      summaryText += "👍 You're making good progress today!";
-    }
-
-    return summaryText;
-  };
-
-  // Reset messages and show greeting when chat becomes visible
+  // Add component mount check for authentication
   useEffect(() => {
-    if (isVisible) {
-      setMessages([]);
-      setIsTyping(false);
+    // Log current authentication state when component mounts
+    const auth = getAuth();
+    console.log(`[ChatUI] Component mounted with auth state:`, {
+      isAuthenticated,
+      contextUserId: user?.uid,
+      currentUser: auth.currentUser?.uid,
+      providedUserId: userId,
+      usedUserId: authenticatedUserId,
+    });
+  }, []);
 
-      const initializeChat = async () => {
-        // Initial greeting
-        setIsTyping(true);
-        await new Promise((resolve) => setTimeout(resolve, 500));
-        setIsTyping(false);
+  // Subscribe to chat history when chat becomes visible
+  useEffect(() => {
+    if (!isVisible || !authenticatedUserId) return;
 
-        const greetingMessage: Message = {
-          id: Date.now().toString(),
-          text: "👋 Hi there! Let me update you on your nutrition for today.",
-          sender: "assistant",
-          timestamp: new Date(),
-        };
-        setMessages([greetingMessage]);
-
-        // Show typing indicator for summary
-        setIsTyping(true);
-        const summaryText = generateDailySummary();
-        await new Promise((resolve) =>
-          setTimeout(resolve, getTypingDelay(summaryText))
-        );
-        setIsTyping(false);
-
-        const summaryMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          text: summaryText,
-          sender: "assistant",
-          timestamp: new Date(),
-        };
-        setMessages((prev) => [...prev, summaryMessage]);
-
-        // Final help message
-        setIsTyping(true);
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        setIsTyping(false);
-
-        const helpMessage: Message = {
-          id: (Date.now() + 2).toString(),
-          text: "💬 Ask me about your calories, macros, or for nutrition suggestions!",
-          sender: "assistant",
-          timestamp: new Date(),
-        };
-        setMessages((prev) => [...prev, helpMessage]);
-      };
-
-      initializeChat();
-    } else {
-      // Clear messages when chat is closed
-      setMessages([]);
-      setInputText("");
-      setIsTyping(false);
+    // Check if user is authenticated
+    if (!isAuthenticated) {
+      console.log("[ChatUI] User is not authenticated");
+      setPermissionError(true);
+      setInitialLoading(false);
+      return;
     }
-  }, [isVisible, totals, goals]);
+
+    setInitialLoading(true);
+    setPermissionError(false);
+    const today = new Date().toISOString().split("T")[0];
+    console.log(
+      `[ChatUI] Fetching chat history for user ${authenticatedUserId} and date ${today}`
+    );
+
+    // Verify current auth state
+    const auth = getAuth();
+    if (auth.currentUser?.uid !== authenticatedUserId) {
+      console.warn(
+        `[ChatUI] Auth mismatch: Current user ${auth.currentUser?.uid} vs expected ${authenticatedUserId}`
+      );
+    }
+
+    const chatRef = collection(db, `users/${authenticatedUserId}/chatHistory`);
+    const q = query(
+      chatRef,
+      where("context.date", "==", today),
+      orderBy("timestamp", "asc")
+    );
+
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        console.log(`[ChatUI] Received ${snapshot.docs.length} messages`);
+        const newMessages: Message[] = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...(doc.data() as Omit<Message, "id">),
+        }));
+        setMessages(newMessages);
+        setInitialLoading(false);
+      },
+      (error) => {
+        console.error("Error fetching chat messages:", error);
+        console.error(
+          `[ChatUI] Document path: users/${authenticatedUserId}/chatHistory`
+        );
+        const auth = getAuth();
+        console.error(
+          `[ChatUI] Auth state:`,
+          !!auth.currentUser,
+          "User ID:",
+          auth.currentUser?.uid
+        );
+        console.error(
+          `[ChatUI] Context auth state:`,
+          isAuthenticated,
+          "User ID:",
+          user?.uid
+        );
+        setInitialLoading(false);
+        setPermissionError(true);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [isVisible, authenticatedUserId, isAuthenticated, user]);
 
   // Handle keyboard showing/hiding
   useEffect(() => {
@@ -324,86 +317,159 @@ export default function ChatUI({
     }
   }, [messages]);
 
+  // Show welcome typing indicator when chat opens with no messages
+  useEffect(() => {
+    if (isVisible && !initialLoading && messages.length === 0) {
+      setIsTyping(true);
+
+      // Hide typing indicator after a delay if no messages arrive
+      const timer = setTimeout(() => {
+        setIsTyping(false);
+      }, 3000);
+
+      return () => clearTimeout(timer);
+    }
+  }, [isVisible, initialLoading, messages.length]);
+
   const handleSendMessage = async () => {
     if (!inputText.trim() || loading) return;
 
-    setLoading(true);
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      text: inputText.trim(),
-      sender: "user",
-      timestamp: new Date(),
-    };
+    // Check if user is authenticated
+    if (!isAuthenticated) {
+      alert("You must be logged in to use the chat feature.");
+      return;
+    }
 
-    setMessages((prev) => [...prev, userMessage]);
+    setLoading(true);
+    setIsTyping(true);
+    const userMessage = inputText.trim();
     setInputText("");
 
+    // Log authentication state
+    console.log(`[ChatUI] Sending message as user: ${authenticatedUserId}`);
+    console.log(`[ChatUI] Authentication status: ${isAuthenticated}`);
+
+    // Set a timeout to hide the typing indicator after 20 seconds
+    const typingTimeout = setTimeout(() => {
+      setIsTyping(false);
+    }, 20000);
+
     try {
-      let responseText = "";
-      const date = new Date().toISOString().split("T")[0];
+      // Try writing directly to Firestore first as a test
+      const today = new Date().toISOString().split("T")[0];
+      const chatRef = collection(
+        db,
+        `users/${authenticatedUserId}/chatHistory`
+      );
 
-      if (
-        inputText.toLowerCase().includes("calories") ||
-        inputText.toLowerCase().includes("progress") ||
-        inputText.toLowerCase().includes("macros")
-      ) {
-        responseText = generateDailySummary();
-      } else if (inputText.toLowerCase().includes("protein")) {
-        // Get today's logs for protein
-        const logsRef = doc(db, `users/${userId}/logs/${date}`);
-        const logsSnap = await getDoc(logsRef);
-        const dailyData = logsSnap.data() || {
-          protein: { current: 0, goal: 120 },
+      // Attempt direct write (bypassing cloud function) to test permissions
+      try {
+        const directMessage = {
+          message: userMessage,
+          sender: "user",
+          timestamp: new Date().toISOString(),
+          context: {
+            date: today,
+          },
         };
 
-        responseText = `You've consumed ${dailyData.protein.current}g out of your ${dailyData.protein.goal}g protein goal today. Good sources of protein include chicken, eggs, tofu, greek yogurt, lentils, and whey protein.`;
-      } else if (inputText.toLowerCase().includes("calories")) {
-        // Get today's logs for calories
-        const logsRef = doc(db, `users/${userId}/logs/${date}`);
-        const logsSnap = await getDoc(logsRef);
-        const dailyData = logsSnap.data() || {
-          calories: { current: 0, goal: 2000 },
-        };
-
-        const remaining = dailyData.calories.goal - dailyData.calories.current;
-        responseText = `You have ${remaining} calories remaining from your ${dailyData.calories.goal} calorie goal today.`;
-      } else {
-        responseText =
-          "I can help you track your nutrition. Ask me about your calories, macros, or for nutrition suggestions!";
+        await addDoc(chatRef, directMessage);
+        console.log(`[ChatUI] Successfully wrote user message directly`);
+      } catch (directWriteError) {
+        console.error(`[ChatUI] Direct write failed:`, directWriteError);
+        // Continue to try the cloud function even if direct write fails
       }
 
-      // Add a small delay before showing the response
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      // Call the chatWithAI function
+      console.log(
+        `[ChatUI] Calling cloud function with message: ${userMessage.substring(
+          0,
+          20
+        )}...`
+      );
+      const result = await chatWithAI({ message: userMessage });
+      console.log(`[ChatUI] Cloud function response:`, result.data);
 
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        text: responseText,
-        sender: "assistant",
-        timestamp: new Date(),
-      };
-
-      // Add the message with a typing delay
-      await addMessageWithDelay(assistantMessage, getTypingDelay(responseText));
+      // Response will be handled by the Firestore listener
     } catch (error) {
-      console.error("Error processing message:", error);
-      const errorMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        text: "Sorry, I had trouble processing your request. Please try again.",
-        sender: "assistant",
-        timestamp: new Date(),
+      console.error("Error sending message:", error);
+
+      // Try to get more detailed error information
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      const errorDetails = JSON.stringify(error, null, 2);
+      console.error(`[ChatUI] Error details: ${errorMessage}`);
+      console.error(`[ChatUI] Full error: ${errorDetails}`);
+
+      // Add error message locally
+      const errorMsg: Message = {
+        id: Date.now().toString(),
+        message: `Sorry, I encountered an error: ${errorMessage}. Please try again or check your connection.`,
+        sender: "ai",
+        timestamp: new Date().toISOString(),
+        context: {
+          date: new Date().toISOString().split("T")[0],
+        },
       };
-      await addMessageWithDelay(errorMessage, 1000);
+      setMessages((prev) => [...prev, errorMsg]);
+    } finally {
+      clearTimeout(typingTimeout);
+      setLoading(false);
+      setIsTyping(false);
+    }
+  };
+
+  // Add testing function to directly write to Firestore
+  const testFirestorePermissions = async () => {
+    try {
+      if (!isAuthenticated) {
+        console.log(
+          "[ChatUI] Cannot test permissions - user not authenticated"
+        );
+        alert("You must be logged in to use the chat feature.");
+        return;
+      }
+
+      setLoading(true);
+      const today = new Date().toISOString().split("T")[0];
+      console.log(
+        `[ChatUI] Testing write to chatHistory for user ${authenticatedUserId}`
+      );
+
+      // Test writing directly to chatHistory collection
+      const chatRef = collection(
+        db,
+        `users/${authenticatedUserId}/chatHistory`
+      );
+      const testMessage = {
+        message: "Test message from app",
+        sender: "user",
+        timestamp: new Date().toISOString(),
+        context: {
+          date: today,
+        },
+      };
+
+      const result = await addDoc(chatRef, testMessage);
+      console.log(`[ChatUI] Successfully wrote test message: ${result.id}`);
+      setPermissionError(false);
+    } catch (error) {
+      console.error("Error writing test message:", error);
+      alert("Permission test failed. Please make sure you're signed in.");
+      setPermissionError(true);
     } finally {
       setLoading(false);
     }
   };
 
+  // Function to navigate to auth screen
+  const goToSignIn = () => {
+    onClose(); // Close the chat UI
+    router.push("/auth"); // Navigate to auth screen
+  };
+
   const renderItem = ({ item }: { item: Message }) => {
     const isUser = item.sender === "user";
-    const isAnalysis = !isUser && item.text.includes("logged your meal");
-    const isNutrition =
-      !isUser && item.text.includes("Daily Nutrition Summary");
-    const isAdjustment = !isUser && item.isAdjustment;
 
     return (
       <View style={styles.messageRow}>
@@ -418,21 +484,15 @@ export default function ChatUI({
           style={[
             styles.messageBubble,
             isUser ? styles.userBubble : styles.assistantBubble,
-            isAnalysis && styles.analysisBubble,
-            isNutrition && styles.nutritionBubble,
-            isAdjustment && styles.adjustmentBubble,
           ]}
         >
           <Text
             style={[
               styles.messageText,
               isUser ? styles.userText : styles.assistantText,
-              isAnalysis && styles.analysisText,
-              isNutrition && styles.nutritionText,
-              isAdjustment && styles.adjustmentText,
             ]}
           >
-            {item.text}
+            {item.message}
           </Text>
         </View>
         {isUser && (
@@ -468,57 +528,127 @@ export default function ChatUI({
 
             {/* Messages Container */}
             <View style={styles.messageContainer}>
-              <FlatList
-                ref={flatListRef}
-                data={messages}
-                renderItem={renderItem}
-                keyExtractor={(item) => item.id}
-                contentContainerStyle={styles.messageList}
-                showsVerticalScrollIndicator={true}
-                scrollEnabled={true}
-                maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
-                ListFooterComponent={
-                  isTyping ? <TypingIndicator isVisible={true} /> : null
-                }
-                onContentSizeChange={() => {
-                  flatListRef.current?.scrollToEnd({ animated: true });
-                }}
-                onLayout={() => {
-                  flatListRef.current?.scrollToEnd({ animated: true });
-                }}
-              />
+              {initialLoading ? (
+                <View style={styles.messageList}>
+                  <TypingIndicator isVisible={true} />
+                </View>
+              ) : permissionError ? (
+                <View style={styles.errorContainer}>
+                  <Ionicons name="alert-circle" size={40} color="#f44336" />
+                  <Text style={styles.errorText}>
+                    {isAuthenticated
+                      ? "Unable to load messages. There might be a connection issue."
+                      : "You need to be signed in to use the chat feature."}
+                  </Text>
+                  {!isAuthenticated ? (
+                    <TouchableOpacity
+                      onPress={goToSignIn}
+                      style={styles.retryButton}
+                    >
+                      <Text style={styles.retryButtonText}>Sign In</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity
+                      onPress={testFirestorePermissions}
+                      style={styles.retryButton}
+                    >
+                      <Text style={styles.retryButtonText}>
+                        Test Connection
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ) : (
+                <FlatList
+                  ref={flatListRef}
+                  data={messages}
+                  renderItem={renderItem}
+                  keyExtractor={(item) => item.id}
+                  contentContainerStyle={styles.messageList}
+                  showsVerticalScrollIndicator={true}
+                  scrollEnabled={true}
+                  maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+                  ListFooterComponent={
+                    isTyping ? <TypingIndicator isVisible={true} /> : null
+                  }
+                  ListEmptyComponent={
+                    <View style={styles.emptyContainer}>
+                      <View style={styles.assistantAvatar}>
+                        <View style={styles.avatarImage}>
+                          <View style={styles.avatarHead} />
+                        </View>
+                      </View>
+                      <View
+                        style={[
+                          styles.messageBubble,
+                          styles.assistantBubble,
+                          styles.welcomeBubble,
+                        ]}
+                      >
+                        <Text style={styles.messageText}>
+                          Hi there! I'm your nutrition assistant. Ask me about
+                          your calories, macros, or for meal suggestions based
+                          on your nutritional goals.
+                        </Text>
+                      </View>
+                    </View>
+                  }
+                  onContentSizeChange={() => {
+                    flatListRef.current?.scrollToEnd({ animated: true });
+                  }}
+                  onLayout={() => {
+                    flatListRef.current?.scrollToEnd({ animated: true });
+                  }}
+                />
+              )}
             </View>
 
             {/* Input Container */}
-            <View style={styles.inputContainer}>
-              <View style={styles.inputWrapper}>
-                <View style={styles.userAvatar}>
-                  <Ionicons name="happy" size={24} color="#999" />
-                </View>
-                <TextInput
-                  style={styles.input}
-                  value={inputText}
-                  onChangeText={setInputText}
-                  placeholder="Message"
-                  placeholderTextColor="#999"
-                  returnKeyType="send"
-                  blurOnSubmit={false}
-                  onSubmitEditing={handleSendMessage}
-                />
-                <TouchableOpacity
-                  style={styles.sendButton}
-                  onPress={handleSendMessage}
-                  disabled={loading || inputText.trim() === ""}
-                >
-                  <Ionicons
-                    name="arrow-forward"
-                    size={24}
-                    color={
-                      loading || inputText.trim() === "" ? "#ccc" : "white"
-                    }
-                  />
-                </TouchableOpacity>
+            <View style={styles.inputWrapper}>
+              <View style={styles.userAvatar}>
+                <Ionicons name="happy" size={24} color="#999" />
               </View>
+              <TextInput
+                style={styles.input}
+                value={inputText}
+                onChangeText={setInputText}
+                placeholder={
+                  !isAuthenticated ? "Please sign in to chat" : "Message"
+                }
+                placeholderTextColor="#999"
+                returnKeyType="send"
+                blurOnSubmit={false}
+                onSubmitEditing={handleSendMessage}
+                editable={isAuthenticated && !permissionError}
+              />
+              <TouchableOpacity
+                style={[
+                  styles.sendButton,
+                  (!isAuthenticated || permissionError) && {
+                    backgroundColor: "#ccc",
+                  },
+                ]}
+                onPress={handleSendMessage}
+                disabled={
+                  loading ||
+                  inputText.trim() === "" ||
+                  !isAuthenticated ||
+                  permissionError
+                }
+              >
+                <Ionicons
+                  name="arrow-forward"
+                  size={24}
+                  color={
+                    loading ||
+                    inputText.trim() === "" ||
+                    !isAuthenticated ||
+                    permissionError
+                      ? "#eee"
+                      : "white"
+                  }
+                />
+              </TouchableOpacity>
             </View>
           </View>
         </View>
@@ -596,6 +726,8 @@ const styles = StyleSheet.create<ChatStyles>({
   assistantBubble: {
     backgroundColor: "#e8f5e9",
     alignSelf: "flex-start",
+    borderWidth: 1,
+    borderColor: "#c8e6c9",
   },
   messageText: {
     fontSize: 16,
@@ -673,37 +805,38 @@ const styles = StyleSheet.create<ChatStyles>({
     justifyContent: "center",
     alignItems: "center",
   },
-  analysisBubble: {
-    backgroundColor: "#ecfdf5",
-    borderWidth: 1,
-    borderColor: "#059669",
+  emptyContainer: {
     padding: 16,
+    flex: 1,
+    alignItems: "flex-start",
   },
-  analysisText: {
-    color: "#059669",
-    fontWeight: "600",
+  welcomeBubble: {
+    marginTop: 12,
+    maxWidth: "85%",
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+  },
+  errorText: {
+    marginTop: 12,
     fontSize: 16,
+    color: "#666",
+    textAlign: "center",
     lineHeight: 24,
   },
-  adjustmentBubble: {
-    backgroundColor: "#f0f9ff", // Tailwind blue-50
-    borderWidth: 1,
-    borderColor: "#3b82f6", // Tailwind blue-500
+  retryButton: {
+    marginTop: 16,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    backgroundColor: "#4CAF50",
+    borderRadius: 20,
   },
-  adjustmentText: {
-    color: "#3b82f6", // Tailwind blue-500
+  retryButtonText: {
+    color: "white",
+    fontSize: 14,
     fontWeight: "600",
-    fontSize: 16,
-  },
-  nutritionBubble: {
-    backgroundColor: "#f0fdf4",
-    borderWidth: 1,
-    borderColor: "#22c55e",
-    padding: 16,
-  },
-  nutritionText: {
-    color: "#15803d",
-    fontSize: 16,
-    lineHeight: 24,
   },
 });

@@ -68,6 +68,15 @@ interface DailyTotals {
   lastUpdated?: string;
 }
 
+interface ChatMessage {
+  message: string;
+  sender: "user" | "ai";
+  timestamp: string;
+  context: {
+    date: string;
+  };
+}
+
 // Health check endpoint
 export const healthCheck = onRequest(
   { region: "us-central1" },
@@ -616,5 +625,235 @@ export const initializeUserGoals = functions.auth
     } catch (error) {
       logger.error("Error initializing user goals:", error);
       throw error;
+    }
+  });
+
+/**
+ * Cloud Function for the AI chat feature
+ * Allows users to chat with an AI about their nutrition
+ */
+export const chatWithAI = functions
+  .runWith({
+    memory: "256MB",
+    timeoutSeconds: 60,
+    secrets: [openaiApiKey],
+  })
+  .https.onCall(async (data, context) => {
+    try {
+      // Verify authentication
+      if (!context.auth) {
+        throw new Error("Unauthorized. User must be logged in.");
+      }
+
+      const userId = context.auth.uid;
+      const userMessage = data.message;
+
+      if (!userMessage || typeof userMessage !== "string") {
+        throw new Error("Invalid message format");
+      }
+
+      // Get current date in local timezone
+      const today = getLocalDate();
+
+      // Log the request
+      logger.info("Processing chat request", {
+        userId,
+        date: today,
+        messagePreview:
+          userMessage.substring(0, 50) + (userMessage.length > 50 ? "..." : ""),
+      });
+
+      // Fetch user's daily totals and goals from Firestore
+      const dailyTotalsRef = db
+        .collection("users")
+        .doc(userId)
+        .collection("dailyTotals")
+        .doc(today);
+
+      const goalsRef = db
+        .collection("users")
+        .doc(userId)
+        .collection("settings")
+        .doc("goals");
+
+      const [dailyTotalsSnap, goalsSnap] = await Promise.all([
+        dailyTotalsRef.get(),
+        goalsRef.get(),
+      ]);
+
+      // Default values if data doesn't exist
+      const dailyTotals = dailyTotalsSnap.exists
+        ? (dailyTotalsSnap.data() as DailyTotals)
+        : {
+            calories: 0,
+            protein: 0,
+            carbs: 0,
+            fat: 0,
+            fiber: 0,
+            sugar: 0,
+            meals: 0,
+          };
+
+      const goals = goalsSnap.exists
+        ? (goalsSnap.data() as {
+            calories: number;
+            protein: number;
+            carbs: number;
+            fat: number;
+          })
+        : { calories: 2000, protein: 120, carbs: 250, fat: 65 };
+
+      // Calculate remaining macros for the day
+      const remaining = {
+        calories: Math.max(0, goals.calories - dailyTotals.calories),
+        protein: Math.max(0, goals.protein - dailyTotals.protein),
+        carbs: Math.max(0, goals.carbs - dailyTotals.carbs),
+        fat: Math.max(0, goals.fat - dailyTotals.fat),
+      };
+
+      // Initialize OpenAI
+      const openai = new OpenAI({
+        apiKey: openaiApiKey.value(),
+      });
+
+      // Fetch last 5 chat messages for context
+      const chatHistoryRef = db
+        .collection("users")
+        .doc(userId)
+        .collection("chatHistory")
+        .where("context.date", "==", today)
+        .orderBy("timestamp", "desc")
+        .limit(5);
+
+      const chatHistorySnap = await chatHistoryRef.get();
+      const chatHistory: ChatMessage[] = chatHistorySnap.docs
+        .map((doc) => doc.data() as ChatMessage)
+        .sort(
+          (a, b) =>
+            new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+        );
+
+      // Construct the messages array for OpenAI
+      type ChatCompletionRole = "system" | "user" | "assistant";
+
+      interface ChatCompletionMessage {
+        role: ChatCompletionRole;
+        content: string;
+      }
+
+      const messages: ChatCompletionMessage[] = [
+        {
+          role: "system",
+          content: `You are a friendly nutrition assistant. Today is ${today}.
+
+The user's nutritional data for today:
+- Consumed: ${dailyTotals.calories} calories, ${
+            dailyTotals.protein
+          }g protein, ${dailyTotals.carbs}g carbs, ${dailyTotals.fat}g fat
+- Daily Goals: ${goals.calories} calories, ${goals.protein}g protein, ${
+            goals.carbs
+          }g carbs, ${goals.fat}g fat
+- Remaining: ${remaining.calories} calories, ${remaining.protein}g protein, ${
+            remaining.carbs
+          }g carbs, ${remaining.fat}g fat
+- Meals logged today: ${dailyTotals.meals || 0}
+
+Your role is to help the user reach their nutritional goals. Be motivational and supportive.
+For meal suggestions, prioritize foods that help meet remaining macros.
+Keep responses clear, concise, and actionable.
+Avoid making health claims without scientific backing.`,
+        },
+      ];
+
+      // Add chat history for context
+      chatHistory.forEach((msg) => {
+        messages.push({
+          role: msg.sender === "user" ? "user" : "assistant",
+          content: msg.message,
+        });
+      });
+
+      // Add the current user message
+      messages.push({
+        role: "user",
+        content: userMessage,
+      });
+
+      // Call OpenAI API
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages,
+        temperature: 0.7,
+        max_tokens: 500,
+      });
+
+      const aiResponse = completion.choices[0].message.content;
+      if (!aiResponse) {
+        throw new Error("No response received from AI");
+      }
+
+      // Create timestamps
+      const timestamp = new Date().toISOString();
+
+      // Save user message to chatHistory
+      const userChatRef = db
+        .collection("users")
+        .doc(userId)
+        .collection("chatHistory")
+        .doc();
+
+      const userChatMessage: ChatMessage = {
+        message: userMessage,
+        sender: "user",
+        timestamp,
+        context: { date: today },
+      };
+
+      // Save AI response to chatHistory
+      const aiChatRef = db
+        .collection("users")
+        .doc(userId)
+        .collection("chatHistory")
+        .doc();
+
+      const aiChatMessage: ChatMessage = {
+        message: aiResponse,
+        sender: "ai",
+        timestamp,
+        context: { date: today },
+      };
+
+      // Save both messages to Firestore
+      await Promise.all([
+        userChatRef.set(userChatMessage),
+        aiChatRef.set(aiChatMessage),
+      ]);
+
+      logger.info("Chat interaction completed successfully", {
+        userId,
+        date: today,
+        userMessageId: userChatRef.id,
+        aiResponseId: aiChatRef.id,
+      });
+
+      // Return the AI response
+      return {
+        response: aiResponse,
+        timestamp,
+        context: { date: today },
+      };
+    } catch (error) {
+      // Enhanced error logging
+      logger.error("Error in chatWithAI:", {
+        error: error instanceof Error ? error.message : "Unknown error",
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+
+      throw new functions.https.HttpsError(
+        "internal",
+        error instanceof Error
+          ? error.message
+          : "Unknown error processing chat request"
+      );
     }
   });
