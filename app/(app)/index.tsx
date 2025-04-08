@@ -752,14 +752,16 @@ export default function HomeScreen() {
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.tabItem, styles.chatTab]}
-            onPress={handleOpenChat}
-            activeOpacity={0.7}
+            onPress={() => router.push("/?openChat=true")}
           >
             <View style={styles.chatButton}>
               <Ionicons name="chatbubble" size={24} color="white" />
             </View>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.tabItem}>
+          <TouchableOpacity
+            style={styles.tabItem}
+            onPress={() => router.push("/insights")}
+          >
             <Ionicons name="stats-chart" size={24} color="#666" />
             <Text style={styles.tabText}>Insights</Text>
           </TouchableOpacity>

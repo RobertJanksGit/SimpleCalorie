@@ -121,6 +121,9 @@ export default function HistoryScreen() {
               const formattedSelectedDate = format(selectedDate, "yyyy-MM-dd");
               setSelectedDayData(defaultData[formattedSelectedDate] || null);
               setLoading(false);
+
+              // Fetch meals for the selected date after loading weekly data
+              fetchMealsForDate(selectedDate);
             }
           },
           (error) => {
@@ -356,10 +359,6 @@ export default function HistoryScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
-      <View style={styles.header}>
-        <Text style={styles.title}>History</Text>
-      </View>
-
       {loading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#4CAF50" />
@@ -454,7 +453,10 @@ export default function HistoryScreen() {
               <Ionicons name="chatbubble" size={24} color="white" />
             </View>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.tabItem}>
+          <TouchableOpacity
+            style={styles.tabItem}
+            onPress={() => router.push("/insights")}
+          >
             <Ionicons name="stats-chart" size={24} color="#666" />
             <Text style={styles.tabText}>Insights</Text>
           </TouchableOpacity>
@@ -472,17 +474,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#f5f5f5",
-  },
-  header: {
-    padding: 16,
-    backgroundColor: "white",
-    borderBottomWidth: 1,
-    borderBottomColor: "#eee",
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: "#333",
   },
   loadingContainer: {
     flex: 1,
