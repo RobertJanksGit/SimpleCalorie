@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { db } from "../firebaseConfig";
 import { doc, onSnapshot, getDoc } from "firebase/firestore";
+import { getLocalDate } from "../utils/dateUtils";
 
 interface DailyTotals {
   calories: number;
@@ -40,7 +41,7 @@ export function useDailyTotals(userId: string) {
       return;
     }
 
-    const date = new Date().toISOString().split("T")[0];
+    const date = getLocalDate();
     const totalsRef = doc(db, `users/${userId}/dailyTotals/${date}`);
     const goalsRef = doc(db, `users/${userId}/settings/goals`);
 
@@ -66,7 +67,11 @@ export function useDailyTotals(userId: string) {
         setLoading(false);
         if (doc.exists()) {
           const data = doc.data();
-          console.log("Received daily totals update:", data); // Debug log
+          console.log("Daily totals document exists:", {
+            path: doc.ref.path,
+            data: data,
+            timestamp: new Date().toISOString(),
+          });
           setTotals({
             calories: data.calories || 0,
             protein: data.protein || 0,
@@ -78,6 +83,10 @@ export function useDailyTotals(userId: string) {
             lastUpdated: data.lastUpdated,
           });
         } else {
+          console.log("No daily totals document exists for today:", {
+            path: doc.ref.path,
+            timestamp: new Date().toISOString(),
+          });
           // Initialize with zeros if no document exists
           setTotals({
             calories: 0,
@@ -91,7 +100,11 @@ export function useDailyTotals(userId: string) {
         }
       },
       (err) => {
-        console.error("Error in daily totals listener:", err);
+        console.error("Error in daily totals listener:", {
+          error: err,
+          userId: userId,
+          timestamp: new Date().toISOString(),
+        });
         setError("Failed to fetch daily totals");
         setLoading(false);
       }

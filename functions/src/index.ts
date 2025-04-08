@@ -75,6 +75,15 @@ export const healthCheck = onRequest(
   }
 );
 
+// Add this helper function at the top level
+function getLocalDate(): string {
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 /**
  * Analyzes a food photo using OpenAI's Vision API
  */
@@ -98,14 +107,14 @@ async function analyzeFoodPhoto(storagePath: string): Promise<FoodAnalysis> {
         {
           role: "system",
           content:
-            'You are a nutrition analysis assistant. Analyze food images and provide detailed nutritional information in valid JSON format ONLY. Your response must be parseable by JSON.parse(). Follow this exact format: {"foodName": "name", "servingSize": "size", "calories": number, "protein": number, "carbs": number, "fat": number, "fiber": number, "sugar": number, "confidence": number, "ingredients": ["item1","item2"], "mealType": "type", "portionEstimate": "estimate", "healthScore": number, "warnings": ["warning1"] }',
+            'You are a nutrition analysis assistant. Analyze food images and provide detailed nutritional information in valid JSON format ONLY. Your response must be parseable by JSON.parse(). If you cannot confidently identify the food or estimate its nutritional content, respond with {"error": "reason for failure"}. Follow this exact format for successful analysis: {"foodName": "name", "servingSize": "size", "calories": number, "protein": number, "carbs": number, "fat": number, "fiber": number, "sugar": number, "confidence": number, "ingredients": ["item1","item2"], "mealType": "type", "portionEstimate": "estimate", "healthScore": number, "warnings": ["warning1"] }',
         },
         {
           role: "user",
           content: [
             {
               type: "text",
-              text: "Analyze this food photo and provide detailed nutritional information in JSON format. Include: foodName, servingSize, calories, protein, carbs, fat, fiber, sugar, confidence, ingredients, mealType, portionEstimate, healthScore, and warnings. Return ONLY valid JSON with no additional text or explanation.",
+              text: "Analyze this food photo and provide detailed nutritional information in JSON format. If you cannot confidently identify the food or estimate its nutritional content, respond with an error. Be conservative with portion sizes and nutritional estimates.",
             },
             {
               type: "image_url",
@@ -127,57 +136,54 @@ async function analyzeFoodPhoto(storagePath: string): Promise<FoodAnalysis> {
       throw new Error("No content received from OpenAI");
     }
 
-    let analysis;
-    try {
-      analysis = JSON.parse(content);
+    let analysis = JSON.parse(content);
 
-      // Ensure all required fields are present with valid data types
-      const validatedAnalysis: FoodAnalysis = {
-        foodName: analysis.foodName || "Unknown food",
-        servingSize: analysis.servingSize || "1 serving",
-        calories: Number(analysis.calories) || 0,
-        protein: Number(analysis.protein) || 0,
-        carbs: Number(analysis.carbs) || 0,
-        fat: Number(analysis.fat) || 0,
-        fiber: Number(analysis.fiber) || 0,
-        sugar: Number(analysis.sugar) || 0,
-        confidence: Number(analysis.confidence) || 0.5,
-        ingredients: Array.isArray(analysis.ingredients)
-          ? analysis.ingredients
-          : ["Unknown"],
-        mealType: analysis.mealType || "Unknown",
-        portionEstimate: analysis.portionEstimate || "1 portion",
-        healthScore: Number(analysis.healthScore) || 50,
-        warnings: Array.isArray(analysis.warnings) ? analysis.warnings : [],
-      };
-
-      return validatedAnalysis;
-    } catch (error) {
-      // Log the error and response
-      console.error("Failed to parse OpenAI response as JSON:", content);
-
-      // Generate a fallback response
-      const fallbackAnalysis: FoodAnalysis = {
-        foodName: "Food item (analysis failed)",
-        servingSize: "1 serving",
-        calories: 300,
-        protein: 15,
-        carbs: 30,
-        fat: 10,
-        fiber: 5,
-        sugar: 8,
-        confidence: 0.5,
-        ingredients: ["Could not analyze ingredients"],
-        mealType: "Unknown",
-        portionEstimate: "Standard portion",
-        healthScore: 50,
-        warnings: ["AI analysis failed, using estimated values"],
-      };
-
-      return fallbackAnalysis;
+    // Check if AI returned an error
+    if (analysis.error) {
+      throw new Error(`AI Analysis Failed: ${analysis.error}`);
     }
+
+    // Check confidence threshold
+    if (Number(analysis.confidence) < 0.6) {
+      throw new Error("Low confidence in food analysis");
+    }
+
+    // Validate and cap nutritional values
+    const validatedAnalysis: FoodAnalysis = {
+      foodName: analysis.foodName || "Unknown food",
+      servingSize: analysis.servingSize || "1 serving",
+      calories: Math.min(Math.max(Number(analysis.calories) || 0, 0), 1500),
+      protein: Math.min(Math.max(Number(analysis.protein) || 0, 0), 75),
+      carbs: Math.min(Math.max(Number(analysis.carbs) || 0, 0), 150),
+      fat: Math.min(Math.max(Number(analysis.fat) || 0, 0), 50),
+      fiber: Math.min(Math.max(Number(analysis.fiber) || 0, 0), 25),
+      sugar: Math.min(Math.max(Number(analysis.sugar) || 0, 0), 50),
+      confidence: Math.min(Math.max(Number(analysis.confidence) || 0, 0), 1),
+      ingredients: Array.isArray(analysis.ingredients)
+        ? analysis.ingredients
+        : ["Unknown"],
+      mealType: analysis.mealType || "Unknown",
+      portionEstimate: analysis.portionEstimate || "1 portion",
+      healthScore: Math.min(
+        Math.max(Number(analysis.healthScore) || 50, 0),
+        100
+      ),
+      warnings: Array.isArray(analysis.warnings) ? analysis.warnings : [],
+    };
+
+    // Reject if essential values are missing or zero
+    if (
+      validatedAnalysis.calories === 0 ||
+      (validatedAnalysis.protein === 0 &&
+        validatedAnalysis.carbs === 0 &&
+        validatedAnalysis.fat === 0)
+    ) {
+      throw new Error("Unable to determine nutritional content");
+    }
+
+    return validatedAnalysis;
   } catch (error) {
-    console.error("Error analyzing photo with OpenAI:", error);
+    logger.error("Error analyzing photo with OpenAI:", error);
     throw error;
   }
 }
@@ -215,56 +221,85 @@ export const analyzePhoto = onObjectFinalized(
 
       const userId = pathParts[0];
       const timestamp = pathParts[1].split(".")[0];
+      const date = getLocalDate(); // Use local date
 
-      // Analyze the photo using OpenAI
-      const analysis = await analyzeFoodPhoto(event.data.name);
+      try {
+        // Analyze the photo using OpenAI
+        const analysis = await analyzeFoodPhoto(event.data.name);
 
-      // Get a public URL for the image
-      const publicUrl = `https://firebasestorage.googleapis.com/v0/b/${
-        event.data.bucket
-      }/o/${encodeURIComponent(event.data.name)}?alt=media`;
+        // Get a public URL for the image
+        const publicUrl = `https://firebasestorage.googleapis.com/v0/b/${
+          event.data.bucket
+        }/o/${encodeURIComponent(event.data.name)}?alt=media`;
 
-      // Calculate additional metrics
-      const totalMacros =
-        analysis.protein * 4 + analysis.carbs * 4 + analysis.fat * 9;
-      const macroPercentages = {
-        proteinPercentage: Math.round(
-          ((analysis.protein * 4) / totalMacros) * 100
-        ),
-        carbsPercentage: Math.round(((analysis.carbs * 4) / totalMacros) * 100),
-        fatPercentage: Math.round(((analysis.fat * 9) / totalMacros) * 100),
-      };
+        // Calculate additional metrics
+        const totalMacros =
+          analysis.protein * 4 + analysis.carbs * 4 + analysis.fat * 9;
+        const macroPercentages = {
+          proteinPercentage: Math.round(
+            ((analysis.protein * 4) / totalMacros) * 100
+          ),
+          carbsPercentage: Math.round(
+            ((analysis.carbs * 4) / totalMacros) * 100
+          ),
+          fatPercentage: Math.round(((analysis.fat * 9) / totalMacros) * 100),
+        };
 
-      // Save analysis results to Firestore
-      const date = new Date().toISOString().split("T")[0];
-      const userMealRef = db
-        .collection("users")
-        .doc(userId)
-        .collection("logs")
-        .doc(date)
-        .collection("meals")
-        .doc(timestamp);
+        // Save analysis results to Firestore
+        const userMealRef = db
+          .collection("users")
+          .doc(userId)
+          .collection("logs")
+          .doc(date)
+          .collection("meals")
+          .doc(timestamp);
 
-      await userMealRef.set({
-        ...analysis,
-        ...macroPercentages,
-        photoUrl: publicUrl,
-        timestamp: new Date().toISOString(),
-        status: "completed",
-        updatedAt: new Date().toISOString(),
-      });
+        await userMealRef.set({
+          ...analysis,
+          ...macroPercentages,
+          photoUrl: publicUrl,
+          timestamp: new Date().toISOString(),
+          status: "completed",
+          updatedAt: new Date().toISOString(),
+        });
 
-      // Update daily totals
-      await updateDailyTotals(userId, date, analysis);
+        // Update daily totals
+        await updateDailyTotals(userId, date, analysis);
 
-      logger.info("Analysis saved successfully", {
-        userId,
-        date,
-        timestamp,
-        analysis,
-      });
+        logger.info("Analysis saved successfully", {
+          userId,
+          date,
+          timestamp,
+          analysis,
+        });
 
-      return { success: true, data: analysis };
+        return { success: true, data: analysis };
+      } catch (error) {
+        // Save error status to Firestore for the frontend to handle
+        const userMealRef = db
+          .collection("users")
+          .doc(userId)
+          .collection("logs")
+          .doc(date)
+          .collection("meals")
+          .doc(timestamp);
+
+        await userMealRef.set({
+          status: "failed",
+          error: error instanceof Error ? error.message : "Unknown error",
+          timestamp: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
+
+        logger.error("Analysis failed", {
+          userId,
+          date,
+          timestamp,
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+
+        throw error;
+      }
     } catch (error) {
       logger.error("Error processing photo", error);
       throw error;
@@ -281,36 +316,73 @@ async function updateDailyTotals(
   const dailyTotalsRef = userRef.collection("dailyTotals").doc(date);
   const mealsRef = userRef.collection("logs").doc(date).collection("meals");
 
-  await db.runTransaction(async (transaction) => {
-    // Get all meals for the day
-    const mealsSnapshot = await transaction.get(mealsRef);
+  logger.info("Starting daily totals update", {
+    userId,
+    date,
+    path: dailyTotalsRef.path,
+  });
 
-    // Calculate new totals from all meals
-    const newTotals: DailyTotals = {
-      calories: 0,
-      protein: 0,
-      carbs: 0,
-      fat: 0,
-      fiber: 0,
-      sugar: 0,
-      meals: mealsSnapshot.size,
-      lastUpdated: new Date().toISOString(),
-    };
+  try {
+    await db.runTransaction(async (transaction) => {
+      // Get all meals for the day
+      const mealsSnapshot = await transaction.get(mealsRef);
+      const dailyTotalsDoc = await transaction.get(dailyTotalsRef);
 
-    // Sum up all meals
-    mealsSnapshot.forEach((doc) => {
-      const mealData = doc.data();
-      newTotals.calories += mealData.calories || 0;
-      newTotals.protein += mealData.protein || 0;
-      newTotals.carbs += mealData.carbs || 0;
-      newTotals.fat += mealData.fat || 0;
-      newTotals.fiber += mealData.fiber || 0;
-      newTotals.sugar += mealData.sugar || 0;
+      logger.info("Found meals for the day", {
+        count: mealsSnapshot.size,
+        path: mealsRef.path,
+        dailyTotalsExists: dailyTotalsDoc.exists,
+      });
+
+      // Calculate new totals from all meals
+      const newTotals: DailyTotals = {
+        calories: 0,
+        protein: 0,
+        carbs: 0,
+        fat: 0,
+        fiber: 0,
+        sugar: 0,
+        meals: mealsSnapshot.size,
+        lastUpdated: new Date().toISOString(),
+      };
+
+      // Sum up all meals
+      mealsSnapshot.forEach((doc) => {
+        const mealData = doc.data();
+        if (mealData.status !== "failed") {
+          // Only count successful meals
+          newTotals.calories += mealData.calories || 0;
+          newTotals.protein += mealData.protein || 0;
+          newTotals.carbs += mealData.carbs || 0;
+          newTotals.fat += mealData.fat || 0;
+          newTotals.fiber += mealData.fiber || 0;
+          newTotals.sugar += mealData.sugar || 0;
+        }
+      });
+
+      logger.info("Calculated new daily totals", {
+        totals: newTotals,
+        path: dailyTotalsRef.path,
+      });
+
+      // Always use set instead of update to ensure document is created
+      transaction.set(dailyTotalsRef, newTotals, { merge: true });
     });
 
-    // Set the new totals
-    transaction.set(dailyTotalsRef, newTotals);
-  });
+    logger.info("Daily totals update completed", {
+      userId,
+      date,
+      path: dailyTotalsRef.path,
+    });
+  } catch (error) {
+    logger.error("Error updating daily totals", {
+      error: error instanceof Error ? error.message : "Unknown error",
+      userId,
+      date,
+      path: dailyTotalsRef.path,
+    });
+    throw error;
+  }
 }
 
 /**
@@ -326,7 +398,6 @@ export const parseMealAdjustment = onRequest(
     secrets: [openaiApiKey],
   },
   async (req, res) => {
-    // Handle CORS
     return corsHandler(req, res, async () => {
       try {
         if (req.method !== "POST") {
@@ -334,9 +405,10 @@ export const parseMealAdjustment = onRequest(
           return;
         }
 
-        const { userId, date, mealId, userInput } = req.body;
+        const { userId, mealId, userInput } = req.body;
+        const date = getLocalDate(); // Use local date instead of getting from request
 
-        if (!userId || !date || !mealId || !userInput) {
+        if (!userId || !mealId || !userInput) {
           res.status(400).send("Missing required parameters");
           return;
         }
@@ -356,7 +428,7 @@ export const parseMealAdjustment = onRequest(
 
         // Use OpenAI to parse the user input
         const completion = await openai.chat.completions.create({
-          model: "gpt-4o-mini",
+          model: "gpt-4-turbo-preview",
           messages: [
             {
               role: "system",

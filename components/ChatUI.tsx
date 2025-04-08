@@ -13,6 +13,7 @@ import {
   KeyboardEvent,
   ViewStyle,
   TextStyle,
+  Animated,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { db } from "../firebaseConfig";
@@ -41,6 +42,10 @@ interface Message {
   timestamp: Date;
   mealId?: string;
   isAdjustment?: boolean;
+}
+
+interface TypingIndicatorProps {
+  isVisible: boolean;
 }
 
 interface ChatUIProps {
@@ -77,6 +82,84 @@ type ChatStyles = {
   analysisText: TextStyle;
   adjustmentBubble: ViewStyle;
   adjustmentText: TextStyle;
+  nutritionBubble: ViewStyle;
+  nutritionText: TextStyle;
+};
+
+const TypingIndicator = ({ isVisible }: TypingIndicatorProps) => {
+  const [dots] = useState([
+    new Animated.Value(0),
+    new Animated.Value(0),
+    new Animated.Value(0),
+  ]);
+
+  useEffect(() => {
+    if (isVisible) {
+      const animations = dots.map((dot, index) =>
+        Animated.sequence([
+          Animated.delay(index * 200),
+          Animated.loop(
+            Animated.sequence([
+              Animated.timing(dot, {
+                toValue: 1,
+                duration: 400,
+                useNativeDriver: true,
+              }),
+              Animated.timing(dot, {
+                toValue: 0,
+                duration: 400,
+                useNativeDriver: true,
+              }),
+            ])
+          ),
+        ])
+      );
+
+      Animated.parallel(animations).start();
+    } else {
+      dots.forEach((dot) => {
+        dot.setValue(0);
+        dot.stopAnimation();
+      });
+    }
+  }, [isVisible]);
+
+  if (!isVisible) return null;
+
+  return (
+    <View style={styles.messageRow}>
+      <View style={styles.assistantAvatar}>
+        <View style={styles.avatarImage}>
+          <View style={styles.avatarHead} />
+        </View>
+      </View>
+      <View
+        style={[
+          styles.messageBubble,
+          styles.assistantBubble,
+          { paddingVertical: 12, paddingHorizontal: 16 },
+        ]}
+      >
+        <View style={{ flexDirection: "row", alignItems: "center" }}>
+          {dots.map((dot, index) => (
+            <Animated.Text
+              key={index}
+              style={[
+                styles.messageText,
+                {
+                  opacity: dot,
+                  marginHorizontal: 2,
+                  fontSize: 20,
+                },
+              ]}
+            >
+              .
+            </Animated.Text>
+          ))}
+        </View>
+      </View>
+    </View>
+  );
 };
 
 export default function ChatUI({
@@ -90,9 +173,117 @@ export default function ChatUI({
   const [loading, setLoading] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [currentMealId, setCurrentMealId] = useState<string | null>(null);
+  const [isTyping, setIsTyping] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const { totals, goals, getRemainingCalories, getMacroPercentages } =
     useDailyTotals(userId);
+
+  // Helper function to add a message with delay
+  const addMessageWithDelay = async (message: Message, delay: number) => {
+    setIsTyping(true);
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    setIsTyping(false);
+    setMessages((prev) => [...prev, message]);
+  };
+
+  // Function to simulate typing delay based on message length
+  const getTypingDelay = (text: string) => {
+    // Average typing speed (characters per minute)
+    const typingSpeed = 800;
+    // Minimum delay of 500ms, plus additional time based on message length
+    return Math.min(Math.max(500, text.length * (60000 / typingSpeed)), 2000);
+  };
+
+  // Function to generate daily summary message
+  const generateDailySummary = () => {
+    const remaining = getRemainingCalories();
+    const macroPercentages = getMacroPercentages();
+
+    let summaryText = `📊 Here's how your day looks:\n\n`;
+    summaryText += `🎯 Calories: ${totals?.calories || 0} / ${
+      goals.calories
+    }\n`;
+    summaryText += `${remaining > 0 ? "⬇️" : "⬆️"} ${Math.abs(
+      remaining
+    )} calories ${remaining > 0 ? "remaining" : "over"}\n\n`;
+
+    summaryText += `💪 Macronutrients:\n\n`;
+    summaryText += `🥩 Protein: ${totals?.protein || 0}g / ${goals.protein}g\n`;
+    summaryText += `🌾 Carbs: ${totals?.carbs || 0}g / ${goals.carbs}g\n`;
+    summaryText += `🥑 Fat: ${totals?.fat || 0}g / ${goals.fat}g\n\n`;
+
+    // Add contextual feedback
+    if (remaining < 200 && remaining > 0) {
+      summaryText += "🎯 You're almost at your calorie goal for today!";
+    } else if (remaining <= 0) {
+      summaryText += "⚠️ You've reached your calorie goal for today.";
+    } else if (remaining > goals.calories * 0.7) {
+      summaryText += "📝 Still plenty of room in your calorie budget.";
+    } else {
+      summaryText += "👍 You're making good progress today!";
+    }
+
+    return summaryText;
+  };
+
+  // Reset messages and show greeting when chat becomes visible
+  useEffect(() => {
+    if (isVisible) {
+      setMessages([]);
+      setIsTyping(false);
+
+      const initializeChat = async () => {
+        // Initial greeting
+        setIsTyping(true);
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        setIsTyping(false);
+
+        const greetingMessage: Message = {
+          id: Date.now().toString(),
+          text: "👋 Hi there! Let me update you on your nutrition for today.",
+          sender: "assistant",
+          timestamp: new Date(),
+        };
+        setMessages([greetingMessage]);
+
+        // Show typing indicator for summary
+        setIsTyping(true);
+        const summaryText = generateDailySummary();
+        await new Promise((resolve) =>
+          setTimeout(resolve, getTypingDelay(summaryText))
+        );
+        setIsTyping(false);
+
+        const summaryMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          text: summaryText,
+          sender: "assistant",
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, summaryMessage]);
+
+        // Final help message
+        setIsTyping(true);
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        setIsTyping(false);
+
+        const helpMessage: Message = {
+          id: (Date.now() + 2).toString(),
+          text: "💬 Ask me about your calories, macros, or for nutrition suggestions!",
+          sender: "assistant",
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, helpMessage]);
+      };
+
+      initializeChat();
+    } else {
+      // Clear messages when chat is closed
+      setMessages([]);
+      setInputText("");
+      setIsTyping(false);
+    }
+  }, [isVisible, totals, goals]);
 
   // Calculate chat height based on keyboard
   const getChatHeight = () => {
@@ -126,68 +317,6 @@ export default function ChatUI({
     };
   }, []);
 
-  useEffect(() => {
-    const fetchLatestMealAnalysis = async () => {
-      if (!showPhotoConfirmation || !userId) return;
-
-      try {
-        const date = new Date().toISOString().split("T")[0];
-        const mealsPath = `users/${userId}/logs/${date}/meals`;
-        const mealsRef = collection(db, mealsPath);
-
-        // Get the most recent meal
-        const q = query(mealsRef, orderBy("timestamp", "desc"), limit(1));
-        const snapshot = await getDocs(q);
-
-        if (!snapshot.empty) {
-          const mealDoc = snapshot.docs[0];
-          const mealData = mealDoc.data();
-          setCurrentMealId(mealDoc.id);
-          const analysisMessage = `I've logged your meal! Added ${mealData.calories} calories, ${mealData.protein}g protein, ${mealData.carbs}g carbs, and ${mealData.fat}g fat to your daily total.`;
-
-          // Set initial messages with the analysis
-          setMessages([
-            {
-              id: "1",
-              text: "Hello! How can I assist you with your nutrition today?",
-              sender: "assistant",
-              timestamp: new Date(),
-            },
-            {
-              id: "2",
-              text: analysisMessage,
-              sender: "assistant",
-              timestamp: new Date(),
-              mealId: mealDoc.id,
-            },
-          ]);
-        } else {
-          console.log("No meals found in collection:", mealsPath);
-          setMessages([
-            {
-              id: "1",
-              text: "Hello! How can I assist you with your nutrition today?",
-              sender: "assistant",
-              timestamp: new Date(),
-            },
-          ]);
-        }
-      } catch (error) {
-        console.error("Error fetching meal analysis:", error);
-        setMessages([
-          {
-            id: "1",
-            text: "Hello! How can I assist you with your nutrition today?",
-            sender: "assistant",
-            timestamp: new Date(),
-          },
-        ]);
-      }
-    };
-
-    fetchLatestMealAnalysis();
-  }, [userId, showPhotoConfirmation]);
-
   // Scroll to bottom when new messages are added
   useEffect(() => {
     if (flatListRef.current && messages.length > 0) {
@@ -218,40 +347,7 @@ export default function ChatUI({
         inputText.toLowerCase().includes("progress") ||
         inputText.toLowerCase().includes("macros")
       ) {
-        const remaining = getRemainingCalories();
-        const macroPercentages = getMacroPercentages();
-
-        responseText = `You have ${remaining} calories remaining from your ${goals.calories} calorie goal today.\n\n`;
-        responseText += `Macro progress:\n`;
-        responseText += `Protein: ${totals?.protein || 0}g/${goals.protein}g (${
-          macroPercentages.protein
-        }%)\n`;
-        responseText += `Carbs: ${totals?.carbs || 0}g/${goals.carbs}g (${
-          macroPercentages.carbs
-        }%)\n`;
-        responseText += `Fat: ${totals?.fat || 0}g/${goals.fat}g (${
-          macroPercentages.fat
-        }%)\n`;
-
-        // Add goal-based feedback
-        if (remaining < 200) {
-          responseText += "\nYou're close to your calorie goal for today! 🎯";
-        } else if (remaining < 0) {
-          responseText +=
-            "\nYou've exceeded your calorie goal for today. Consider adjusting your portions for the next meal. 🤔";
-        } else if (remaining > goals.calories * 0.7) {
-          responseText +=
-            "\nYou still have quite a bit to go! Make sure to eat enough to meet your goals. 🍽️";
-        }
-
-        const assistantMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          text: responseText,
-          sender: "assistant",
-          timestamp: new Date(),
-        };
-
-        setMessages((prev) => [...prev, assistantMessage]);
+        responseText = generateDailySummary();
       } else if (inputText.toLowerCase().includes("protein")) {
         // Get today's logs for protein
         const logsRef = doc(db, `users/${userId}/logs/${date}`);
@@ -261,15 +357,6 @@ export default function ChatUI({
         };
 
         responseText = `You've consumed ${dailyData.protein.current}g out of your ${dailyData.protein.goal}g protein goal today. Good sources of protein include chicken, eggs, tofu, greek yogurt, lentils, and whey protein.`;
-
-        const assistantMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          text: responseText,
-          sender: "assistant",
-          timestamp: new Date(),
-        };
-
-        setMessages((prev) => [...prev, assistantMessage]);
       } else if (inputText.toLowerCase().includes("calories")) {
         // Get today's logs for calories
         const logsRef = doc(db, `users/${userId}/logs/${date}`);
@@ -280,29 +367,23 @@ export default function ChatUI({
 
         const remaining = dailyData.calories.goal - dailyData.calories.current;
         responseText = `You have ${remaining} calories remaining from your ${dailyData.calories.goal} calorie goal today.`;
-
-        const assistantMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          text: responseText,
-          sender: "assistant",
-          timestamp: new Date(),
-        };
-
-        setMessages((prev) => [...prev, assistantMessage]);
       } else {
-        responseText = currentMealId
-          ? "I can help you adjust this meal. Try saying something like 'add 2 tbsp olive oil' or 'change protein to 30g'."
-          : "I can help you track your nutrition. Ask me about your calories, macros, or for nutrition suggestions!";
-
-        const assistantMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          text: responseText,
-          sender: "assistant",
-          timestamp: new Date(),
-        };
-
-        setMessages((prev) => [...prev, assistantMessage]);
+        responseText =
+          "I can help you track your nutrition. Ask me about your calories, macros, or for nutrition suggestions!";
       }
+
+      // Add a small delay before showing the response
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+
+      const assistantMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        text: responseText,
+        sender: "assistant",
+        timestamp: new Date(),
+      };
+
+      // Add the message with a typing delay
+      await addMessageWithDelay(assistantMessage, getTypingDelay(responseText));
     } catch (error) {
       console.error("Error processing message:", error);
       const errorMessage: Message = {
@@ -311,7 +392,7 @@ export default function ChatUI({
         sender: "assistant",
         timestamp: new Date(),
       };
-      setMessages((prev) => [...prev, errorMessage]);
+      await addMessageWithDelay(errorMessage, 1000);
     } finally {
       setLoading(false);
     }
@@ -320,6 +401,8 @@ export default function ChatUI({
   const renderItem = ({ item }: { item: Message }) => {
     const isUser = item.sender === "user";
     const isAnalysis = !isUser && item.text.includes("logged your meal");
+    const isNutrition =
+      !isUser && item.text.includes("Daily Nutrition Summary");
     const isAdjustment = !isUser && item.isAdjustment;
 
     return (
@@ -336,6 +419,7 @@ export default function ChatUI({
             styles.messageBubble,
             isUser ? styles.userBubble : styles.assistantBubble,
             isAnalysis && styles.analysisBubble,
+            isNutrition && styles.nutritionBubble,
             isAdjustment && styles.adjustmentBubble,
           ]}
         >
@@ -344,6 +428,7 @@ export default function ChatUI({
               styles.messageText,
               isUser ? styles.userText : styles.assistantText,
               isAnalysis && styles.analysisText,
+              isNutrition && styles.nutritionText,
               isAdjustment && styles.adjustmentText,
             ]}
           >
@@ -389,6 +474,9 @@ export default function ChatUI({
                   keyExtractor={(item) => item.id}
                   contentContainerStyle={styles.messageList}
                   showsVerticalScrollIndicator={true}
+                  ListFooterComponent={() => (
+                    <TypingIndicator isVisible={isTyping} />
+                  )}
                   onContentSizeChange={() => {
                     if (flatListRef.current) {
                       flatListRef.current.scrollToEnd({ animated: true });
@@ -486,7 +574,7 @@ const styles = StyleSheet.create<ChatStyles>({
   },
   messageBubble: {
     maxWidth: "75%",
-    padding: 12,
+    padding: 16,
     borderRadius: 20,
     marginHorizontal: 8,
   },
@@ -502,7 +590,8 @@ const styles = StyleSheet.create<ChatStyles>({
   },
   messageText: {
     fontSize: 16,
-    lineHeight: 22,
+    lineHeight: 24,
+    color: "#333",
   },
   userText: {
     color: "#000",
@@ -576,14 +665,16 @@ const styles = StyleSheet.create<ChatStyles>({
     alignItems: "center",
   },
   analysisBubble: {
-    backgroundColor: "#ecfdf5", // Tailwind green-50
+    backgroundColor: "#ecfdf5",
     borderWidth: 1,
-    borderColor: "#059669", // Tailwind green-600
+    borderColor: "#059669",
+    padding: 16,
   },
   analysisText: {
-    color: "#059669", // Tailwind green-600
+    color: "#059669",
     fontWeight: "600",
     fontSize: 16,
+    lineHeight: 24,
   },
   adjustmentBubble: {
     backgroundColor: "#f0f9ff", // Tailwind blue-50
@@ -594,5 +685,16 @@ const styles = StyleSheet.create<ChatStyles>({
     color: "#3b82f6", // Tailwind blue-500
     fontWeight: "600",
     fontSize: 16,
+  },
+  nutritionBubble: {
+    backgroundColor: "#f0fdf4",
+    borderWidth: 1,
+    borderColor: "#22c55e",
+    padding: 16,
+  },
+  nutritionText: {
+    color: "#15803d",
+    fontSize: 16,
+    lineHeight: 24,
   },
 });

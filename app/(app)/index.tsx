@@ -36,6 +36,7 @@ import {
   GestureHandlerRootView,
   Swipeable,
 } from "react-native-gesture-handler";
+import { getLocalDate } from "../../utils/dateUtils";
 
 // Add interfaces
 interface MacroProgressProps {
@@ -97,7 +98,7 @@ export default function HomeScreen() {
     const fetchMeals = async () => {
       if (!user?.uid) return;
 
-      const date = new Date().toISOString().split("T")[0];
+      const date = getLocalDate();
       const mealsPath = `users/${user.uid}/logs/${date}/meals`;
       const mealsRef = collection(db, mealsPath);
       const q = query(mealsRef, orderBy("timestamp", "desc"));
@@ -134,11 +135,46 @@ export default function HomeScreen() {
     if (!user?.uid) return;
 
     try {
-      const date = new Date().toISOString().split("T")[0];
+      const date = getLocalDate();
       const mealRef = doc(db, `users/${user.uid}/logs/${date}/meals`, mealId);
+      const dailyTotalsRef = doc(db, `users/${user.uid}/dailyTotals/${date}`);
 
+      // Delete the meal
       await deleteDoc(mealRef);
+
+      // Update local state
       setMeals((prevMeals) => prevMeals.filter((meal) => meal.id !== mealId));
+
+      // Recalculate daily totals from remaining meals
+      const mealsRef = collection(db, `users/${user.uid}/logs/${date}/meals`);
+      const mealsSnapshot = await getDocs(mealsRef);
+
+      let newTotals = {
+        calories: 0,
+        protein: 0,
+        carbs: 0,
+        fat: 0,
+        fiber: 0,
+        sugar: 0,
+        meals: mealsSnapshot.size,
+        lastUpdated: new Date().toISOString(),
+      };
+
+      // Sum up all remaining meals
+      mealsSnapshot.forEach((doc) => {
+        const mealData = doc.data();
+        if (mealData.status !== "failed") {
+          newTotals.calories += mealData.calories || 0;
+          newTotals.protein += mealData.protein || 0;
+          newTotals.carbs += mealData.carbs || 0;
+          newTotals.fat += mealData.fat || 0;
+          newTotals.fiber += mealData.fiber || 0;
+          newTotals.sugar += mealData.sugar || 0;
+        }
+      });
+
+      // Update daily totals
+      await updateDoc(dailyTotalsRef, newTotals);
 
       // Close any open swipeable
       if (swipeableRefs.current[mealId]) {
@@ -158,7 +194,7 @@ export default function HomeScreen() {
     setEditingMeal(null);
 
     try {
-      const date = new Date().toISOString().split("T")[0];
+      const date = getLocalDate();
       const mealRef = doc(db, `users/${user.uid}/logs/${date}/meals`, mealId);
       const dailyTotalsRef = doc(db, `users/${user.uid}/dailyTotals/${date}`);
 
@@ -265,20 +301,38 @@ export default function HomeScreen() {
     color,
   }: MacroProgressProps) => {
     const percentage = Math.round((current / goal) * 100);
+    const isExceeding = percentage > 100;
+
     return (
       <View style={styles.macroProgress}>
-        <Text style={styles.macroLabel}>{label}</Text>
+        <View style={styles.macroLabelContainer}>
+          <Text style={styles.macroLabel}>{label}</Text>
+          {isExceeding && (
+            <Text style={styles.exceedingIndicator}>Exceeding</Text>
+          )}
+        </View>
         <View style={styles.progressContainer}>
           <View
             style={[
               styles.progressBar,
-              { width: `${percentage}%`, backgroundColor: color },
+              {
+                width: isExceeding ? "100%" : `${percentage}%`,
+                backgroundColor: isExceeding ? "#FF6B6B" : color,
+                opacity: percentage === 0 ? 0.3 : 1,
+              },
             ]}
           />
         </View>
-        <Text style={styles.macroValues}>
-          {current}g / {goal}g
-        </Text>
+        <View style={styles.macroValuesContainer}>
+          <Text
+            style={[styles.macroValues, isExceeding && styles.exceedingValue]}
+          >
+            {current}g / {goal}g
+          </Text>
+          {isExceeding && (
+            <Text style={styles.exceedingAmount}>(+{current - goal}g)</Text>
+          )}
+        </View>
       </View>
     );
   };
@@ -647,9 +701,19 @@ const styles = StyleSheet.create({
   macroProgress: {
     gap: 4,
   },
+  macroLabelContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
   macroLabel: {
     fontSize: 14,
     color: "#666",
+  },
+  exceedingIndicator: {
+    fontSize: 12,
+    color: "#FF6B6B",
+    fontWeight: "500",
   },
   progressContainer: {
     height: 8,
@@ -661,9 +725,22 @@ const styles = StyleSheet.create({
     height: "100%",
     borderRadius: 4,
   },
+  macroValuesContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
   macroValues: {
     fontSize: 12,
     color: "#666",
+  },
+  exceedingValue: {
+    color: "#FF6B6B",
+  },
+  exceedingAmount: {
+    fontSize: 12,
+    color: "#FF6B6B",
+    fontWeight: "500",
   },
   buttonContainer: {
     flexDirection: "row",
