@@ -73,11 +73,8 @@ export default function CameraScreen() {
         const photoService = PhotoService.getInstance();
         await photoService.retryUpload(photo.uri, user.uid, selectedMealType);
 
-        // Navigate back and show analysis in chat
-        router.push({
-          pathname: "/",
-          params: { photoTaken: "true", showChat: "true" },
-        });
+        // Just close the camera and return to previous screen
+        router.back();
       } catch (error) {
         console.error("Error uploading photo:", error);
         Alert.alert(

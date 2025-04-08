@@ -13,6 +13,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   FlatList,
+  Alert,
 } from "react-native";
 import {
   SafeAreaView,
@@ -36,6 +37,7 @@ import {
   updateDoc,
   getDoc,
   onSnapshot,
+  limit,
 } from "firebase/firestore";
 import {
   GestureHandlerRootView,
@@ -63,6 +65,7 @@ interface Meal {
   photoUrl?: string;
   confidence?: number;
   analysisNotes?: string;
+  status: string;
 }
 
 interface EditModalProps {
@@ -75,11 +78,9 @@ interface EditModalProps {
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const { photoTaken: photoTakenParam, showChat: showChatParam } =
-    useLocalSearchParams<{
-      photoTaken: string;
-      showChat: string;
-    }>();
+  const { photoTaken: photoTakenParam } = useLocalSearchParams<{
+    photoTaken: string;
+  }>();
   const [photoTaken, setPhotoTaken] = useState(false);
   const [isChatVisible, setIsChatVisible] = useState(false);
   const { totals, goals, loading, getRemainingCalories, getMacroPercentages } =
@@ -95,16 +96,6 @@ export default function HomeScreen() {
     [key: string]: boolean;
   }>({});
 
-  // Handle URL parameters
-  useEffect(() => {
-    if (photoTakenParam === "true") {
-      setPhotoTaken(true);
-    }
-    if (showChatParam === "true") {
-      setIsChatVisible(true);
-    }
-  }, [photoTakenParam, showChatParam]);
-
   // Fetch meals for today
   useEffect(() => {
     if (!user?.uid) return;
@@ -114,29 +105,83 @@ export default function HomeScreen() {
     const mealsRef = collection(db, mealsPath);
     const q = query(mealsRef, orderBy("timestamp", "desc"));
 
+    // Track error alerts to prevent duplicates
+    let alertShown = false;
+
     // Set up real-time listener
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
-        const fetchedMeals = snapshot.docs.map((doc) => {
-          const data = doc.data();
-          return {
-            id: doc.id,
-            type: data.mealType || "Meal",
-            name: data.foodName || "Meal",
-            time: new Date(data.timestamp).toLocaleTimeString([], {
-              hour: "numeric",
-              minute: "2-digit",
-            }),
-            calories: data.calories || 0,
-            protein: data.protein || 0,
-            carbs: data.carbs || 0,
-            fat: data.fat || 0,
-            photoUrl: data.photoUrl || null,
-            confidence: data.confidence || undefined,
-            analysisNotes: data.analysisNotes || undefined,
-          };
+        // Process document changes first to detect errors before rendering
+        snapshot.docChanges().forEach((change) => {
+          // Only handle "removed" events for meals that were pending
+          if (change.type === "removed") {
+            const data = change.doc.data();
+            if (data.status === "pending") {
+              // This is likely a "No food detected" case - Cloud Function is deleting the document
+              if (!alertShown) {
+                Alert.alert(
+                  "No Food Detected",
+                  "We couldn't detect any food in the image. Please try taking a clearer photo of your meal."
+                );
+                alertShown = true;
+
+                // Reset the alert flag after a delay
+                setTimeout(() => {
+                  alertShown = false;
+                }, 5000);
+              }
+            }
+          }
         });
+
+        const fetchedMeals = snapshot.docs
+          .map((doc) => {
+            const data = doc.data();
+            // Skip failed meals and show appropriate error
+            if (data.status === "failed") {
+              const errorMsg = data.errorMessage || "Unknown error";
+
+              // Only show alert if we haven't shown one recently
+              if (!alertShown && !errorMsg.includes("No food detected")) {
+                Alert.alert(
+                  "Analysis Failed",
+                  "Failed to analyze the meal. Please try again."
+                );
+                alertShown = true;
+
+                // Reset the alert flag after a delay
+                setTimeout(() => {
+                  alertShown = false;
+                }, 5000);
+              }
+              return null;
+            }
+            return {
+              id: doc.id,
+              type: data.mealType || "Meal",
+              name: data.foodName || "Meal",
+              time: new Date(data.timestamp).toLocaleTimeString([], {
+                hour: "numeric",
+                minute: "2-digit",
+              }),
+              calories: data.calories || 0,
+              protein: data.protein || 0,
+              carbs: data.carbs || 0,
+              fat: data.fat || 0,
+              photoUrl: data.photoUrl || null,
+              confidence: data.confidence || undefined,
+              analysisNotes: data.analysisNotes || undefined,
+              status: data.status || "completed",
+            } as Meal;
+          })
+          .filter((meal): meal is Meal => meal !== null)
+          // Sort meals: pending first, then by timestamp
+          .sort((a, b) => {
+            if (a.status === "pending" && b.status !== "pending") return -1;
+            if (a.status !== "pending" && b.status === "pending") return 1;
+            return new Date(b.time).getTime() - new Date(a.time).getTime();
+          });
         setMeals(fetchedMeals);
       },
       (error) => {
@@ -144,9 +189,15 @@ export default function HomeScreen() {
       }
     );
 
-    // Cleanup subscription on unmount
     return () => unsubscribe();
   }, [user?.uid]);
+
+  // Remove the separate analyzing state effect since we're handling it in the meals listener
+  useEffect(() => {
+    if (photoTakenParam === "true") {
+      setPhotoTaken(true);
+    }
+  }, [photoTakenParam]);
 
   const handleDeleteMeal = async (mealId: string) => {
     if (!user?.uid) return;
@@ -428,9 +479,10 @@ export default function HomeScreen() {
 
   const renderMealCard = (meal: Meal) => {
     const isExpanded = expandedMealId === meal.id;
+    const isPending = meal.status === "pending";
 
     const handleCardPress = () => {
-      if (!gestureStateRef.current.isGesture) {
+      if (!gestureStateRef.current.isGesture && !isPending) {
         setExpandedMealId(isExpanded ? null : meal.id);
       }
     };
@@ -452,7 +504,7 @@ export default function HomeScreen() {
         outputRange: [64, 0],
       });
 
-      return (
+      return isPending ? null : (
         <View style={styles.rightActions}>
           <Animated.View style={{ transform: [{ translateX: trans }] }}>
             <TouchableOpacity
@@ -491,15 +543,15 @@ export default function HomeScreen() {
         }}
         onSwipeableClose={() => {
           setSelectedMealId(null);
-          // Reset gesture state after a delay
           setTimeout(() => {
             gestureStateRef.current.isGesture = false;
           }, 100);
         }}
         overshootRight={false}
+        enabled={!isPending}
       >
         <TouchableOpacity
-          style={styles.mealCard}
+          style={[styles.mealCard, isPending && styles.analyzingCard]}
           onPress={handleCardPress}
           activeOpacity={0.7}
         >
@@ -522,8 +574,10 @@ export default function HomeScreen() {
             )}
             <View style={styles.mealInfo}>
               <View style={styles.mealHeader}>
-                <Text style={styles.mealType}>{meal.type}</Text>
-                {meal.confidence !== undefined && (
+                <Text style={styles.mealType}>
+                  {isPending ? "Analyzing..." : meal.type}
+                </Text>
+                {!isPending && meal.confidence !== undefined && (
                   <View
                     style={[
                       styles.confidenceTag,
@@ -536,18 +590,31 @@ export default function HomeScreen() {
                   </View>
                 )}
               </View>
-              <Text style={styles.mealName}>{meal.name}</Text>
-              <Text style={styles.macroText}>
-                Protein: {meal.protein}g • Carbs: {meal.carbs}g • Fat:{" "}
-                {meal.fat}g
-              </Text>
+              {isPending ? (
+                <View style={styles.analyzingContent}>
+                  <ActivityIndicator size="small" color="#4CAF50" />
+                  <Text style={styles.analyzingText}>
+                    AI is analyzing your meal...
+                  </Text>
+                </View>
+              ) : (
+                <>
+                  <Text style={styles.mealName}>{meal.name}</Text>
+                  <Text style={styles.macroText}>
+                    Protein: {meal.protein}g • Carbs: {meal.carbs}g • Fat:{" "}
+                    {meal.fat}g
+                  </Text>
+                </>
+              )}
             </View>
-            <View style={styles.mealRight}>
-              <Text style={styles.mealTime}>{meal.time}</Text>
-              <Text style={styles.mealCalories}>{meal.calories} cal</Text>
-            </View>
+            {!isPending && (
+              <View style={styles.mealRight}>
+                <Text style={styles.mealTime}>{meal.time}</Text>
+                <Text style={styles.mealCalories}>{meal.calories} cal</Text>
+              </View>
+            )}
           </View>
-          {isExpanded && meal.analysisNotes && (
+          {isExpanded && meal.analysisNotes && !isPending && (
             <View style={styles.analysisContainer}>
               <Text style={styles.analysisNotes}>{meal.analysisNotes}</Text>
             </View>
@@ -676,7 +743,10 @@ export default function HomeScreen() {
             <Ionicons name="home" size={24} color="#4CAF50" />
             <Text style={[styles.tabText, { color: "#4CAF50" }]}>Home</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.tabItem}>
+          <TouchableOpacity
+            style={styles.tabItem}
+            onPress={() => router.push("/history")}
+          >
             <Ionicons name="time-outline" size={24} color="#666" />
             <Text style={styles.tabText}>History</Text>
           </TouchableOpacity>
@@ -1091,6 +1161,21 @@ const styles = StyleSheet.create({
     borderTopColor: "#f0f0f0",
   },
   analysisNotes: {
+    fontSize: 14,
+    color: "#666",
+    fontStyle: "italic",
+  },
+  analyzingCard: {
+    backgroundColor: "#f8f9fa",
+    opacity: 0.9,
+  },
+  analyzingContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 4,
+  },
+  analyzingText: {
     fontSize: 14,
     color: "#666",
     fontStyle: "italic",

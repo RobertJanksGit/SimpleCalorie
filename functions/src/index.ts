@@ -230,7 +230,7 @@ export const analyzePhoto = onObjectFinalized(
       }
 
       const userId = pathParts[0];
-      const timestamp = pathParts[1].split(".")[0];
+      const fileTimestampMs = parseInt(pathParts[1].split(".")[0]);
 
       // Log current time in UTC and local
       const utcNow = new Date();
@@ -245,7 +245,7 @@ export const analyzePhoto = onObjectFinalized(
       logger.info("Date calculation", {
         calculatedDate: date,
         userId,
-        timestamp,
+        fileTimestampMs,
         rawTimestamp: new Date().toISOString(),
       });
 
@@ -284,10 +284,70 @@ export const analyzePhoto = onObjectFinalized(
           .doc(userId)
           .collection("logs")
           .doc(date)
-          .collection("meals")
-          .doc(timestamp);
+          .collection("meals");
 
-        await userMealRef.set({
+        // Find all pending meals
+        const allPendingMeals = await userMealRef
+          .where("status", "==", "pending")
+          .get();
+
+        // Log all pending meals to debug
+        logger.info("All pending meals in collection", {
+          count: allPendingMeals.size,
+          meals: allPendingMeals.docs.map((doc) => ({
+            id: doc.id,
+            timestamp: doc.data().timestamp,
+            uploadTime: new Date(doc.data().timestamp).getTime(),
+          })),
+        });
+
+        // Get all pending meals that were created within 30 seconds of this upload
+        const pendingMeals = allPendingMeals.docs.filter((doc) => {
+          try {
+            const mealData = doc.data();
+            // Parse the ISO timestamp to milliseconds
+            const mealTimestamp = new Date(mealData.timestamp).getTime();
+            // Compare with the file timestamp (within 30 seconds)
+            const timeDiffMs = Math.abs(mealTimestamp - fileTimestampMs);
+            return timeDiffMs < 30000; // 30 seconds
+          } catch (parseErr) {
+            logger.error("Error parsing timestamp for meal", {
+              docId: doc.id,
+              timestamp: doc.data().timestamp,
+              errorMessage:
+                parseErr instanceof Error ? parseErr.message : String(parseErr),
+            });
+            return false;
+          }
+        });
+
+        // Add debug logging for pending meals matching timestamp
+        logger.info("Found pending meals matching timestamp", {
+          allPendingCount: allPendingMeals.size,
+          matchingCount: pendingMeals.length,
+          fileTimestampMs,
+          pendingMeals: pendingMeals.map((doc) => ({
+            id: doc.id,
+            timestamp: doc.data().timestamp,
+            mealTimestamp: new Date(doc.data().timestamp).getTime(),
+            diff: Math.abs(
+              new Date(doc.data().timestamp).getTime() - fileTimestampMs
+            ),
+          })),
+        });
+
+        // Use batch for atomic operations
+        const batch = db.batch();
+
+        // Delete pending meals that match
+        pendingMeals.forEach((doc) => {
+          logger.info("Deleting pending meal", { id: doc.id });
+          batch.delete(doc.ref);
+        });
+
+        // Create new document with analysis results
+        const newMealRef = userMealRef.doc();
+        batch.set(newMealRef, {
           ...analysis,
           ...macroPercentages,
           photoUrl: publicUrl,
@@ -296,46 +356,116 @@ export const analyzePhoto = onObjectFinalized(
           updatedAt: new Date().toISOString(),
         });
 
+        // Commit the batch
+        await batch.commit();
+
         // Update daily totals
         await updateDailyTotals(userId, date, analysis);
 
         logger.info("Analysis saved successfully", {
           userId,
           date,
-          timestamp,
+          fileTimestampMs,
           analysis,
         });
 
         return { success: true, data: analysis };
-      } catch (error) {
-        // Save error status to Firestore for the frontend to handle
+      } catch (analysisError) {
+        // Find and update any pending meals to failed status
         const userMealRef = db
           .collection("users")
           .doc(userId)
           .collection("logs")
           .doc(date)
-          .collection("meals")
-          .doc(timestamp);
+          .collection("meals");
 
-        await userMealRef.set({
-          status: "failed",
-          error: error instanceof Error ? error.message : "Unknown error",
-          timestamp: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
+        // Find all pending meals
+        const allPendingMeals = await userMealRef
+          .where("status", "==", "pending")
+          .get();
+
+        // Get all pending meals that were created within 30 seconds of this upload
+        const pendingMeals = allPendingMeals.docs.filter((doc) => {
+          try {
+            const mealData = doc.data();
+            const mealTimestamp = new Date(mealData.timestamp).getTime();
+            const timeDiffMs = Math.abs(mealTimestamp - fileTimestampMs);
+
+            // Consider it a match if it's within 30 seconds (30000ms)
+            return timeDiffMs < 30000;
+          } catch (parseErr) {
+            logger.error("Error parsing timestamp for meal", {
+              docId: doc.id,
+              timestamp: doc.data().timestamp,
+              errorMessage:
+                parseErr instanceof Error ? parseErr.message : String(parseErr),
+            });
+            return false;
+          }
         });
+
+        // Add debug logging for pending meals matching timestamp
+        logger.info("Found pending meals to handle for error", {
+          allPendingCount: allPendingMeals.size,
+          matchingCount: pendingMeals.length,
+          fileTimestampMs,
+          pendingMeals: pendingMeals.map((doc) => ({
+            id: doc.id,
+            timestamp: doc.data().timestamp,
+          })),
+          errorMessage:
+            analysisError instanceof Error
+              ? analysisError.message
+              : String(analysisError),
+        });
+
+        // Check if it's a "No food detected" error
+        const errorMessage =
+          analysisError instanceof Error
+            ? analysisError.message
+            : String(analysisError);
+        const isNoFoodError = errorMessage.includes("No food detected");
+
+        // Use batch for atomic operations
+        const batch = db.batch();
+
+        pendingMeals.forEach((doc) => {
+          if (isNoFoodError) {
+            // Delete the meal document if no food was detected
+            logger.info("Deleting meal document - No food detected", {
+              id: doc.id,
+            });
+            batch.delete(doc.ref);
+          } else {
+            // For other errors, mark as failed
+            logger.info("Marking meal as failed", { id: doc.id });
+            batch.update(doc.ref, {
+              status: "failed",
+              errorMessage: errorMessage,
+              updatedAt: new Date().toISOString(),
+            });
+          }
+        });
+
+        await batch.commit();
 
         logger.error("Analysis failed", {
           userId,
           date,
-          timestamp,
-          error: error instanceof Error ? error.message : "Unknown error",
+          fileTimestampMs,
+          errorMessage: errorMessage,
+          isNoFoodError: isNoFoodError,
         });
 
-        throw error;
+        throw analysisError;
       }
-    } catch (error) {
-      logger.error("Error processing photo", error);
-      throw error;
+    } catch (outerError) {
+      logger.error("Error processing photo", {
+        error:
+          outerError instanceof Error ? outerError.message : String(outerError),
+        stack: outerError instanceof Error ? outerError.stack : undefined,
+      });
+      throw outerError;
     }
   }
 );

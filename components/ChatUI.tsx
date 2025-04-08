@@ -35,6 +35,7 @@ import { useDailyTotals } from "../hooks/useDailyTotals";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { useAuth } from "../contexts/AuthContext";
 import { useRouter } from "expo-router";
+import Markdown from "react-native-markdown-display";
 
 // Get screen dimensions
 const { width: screenWidth, height: screenHeight } = Dimensions.get("window");
@@ -73,6 +74,8 @@ interface ChatResponse {
 
 type ChatStyles = {
   overlay: ViewStyle;
+  overlayTouchable: ViewStyle;
+  keyboardAvoidingView: ViewStyle;
   chatWrapper: ViewStyle;
   chatContainer: ViewStyle;
   header: ViewStyle;
@@ -101,6 +104,91 @@ type ChatStyles = {
   retryButton: ViewStyle;
   retryButtonText: TextStyle;
 };
+
+// Add markdown styles
+const markdownStyles = {
+  body: {
+    color: "#333",
+    fontSize: 16,
+  },
+  heading1: {
+    fontSize: 24,
+    fontWeight: "bold",
+    marginVertical: 12,
+    color: "#333",
+  },
+  heading2: {
+    fontSize: 20,
+    fontWeight: "bold",
+    marginVertical: 10,
+    color: "#333",
+  },
+  heading3: {
+    fontSize: 18,
+    fontWeight: "bold",
+    marginVertical: 8,
+    color: "#333",
+  },
+  paragraph: {
+    marginVertical: 4,
+    lineHeight: 20,
+  },
+  link: {
+    color: "#4CAF50",
+    textDecorationLine: "underline" as const,
+  },
+  list_item: {
+    flexDirection: "row" as const,
+    alignItems: "flex-start" as const,
+  },
+  bullet_list: {
+    marginVertical: 4,
+  },
+  ordered_list: {
+    marginVertical: 4,
+  },
+  bullet: {
+    marginRight: 4,
+  },
+  code_inline: {
+    backgroundColor: "#f5f5f5",
+    padding: 4,
+    borderRadius: 4,
+    fontFamily: Platform.OS === "ios" ? "Courier" : "monospace",
+  },
+  code_block: {
+    backgroundColor: "#f5f5f5",
+    padding: 8,
+    borderRadius: 4,
+    marginVertical: 8,
+    fontFamily: Platform.OS === "ios" ? "Courier" : "monospace",
+  },
+  fence: {
+    backgroundColor: "#f5f5f5",
+    padding: 8,
+    borderRadius: 4,
+    marginVertical: 8,
+    fontFamily: Platform.OS === "ios" ? "Courier" : "monospace",
+  },
+  table: {
+    borderWidth: 1,
+    borderColor: "#ddd",
+    marginVertical: 8,
+  },
+  thead: {
+    backgroundColor: "#f5f5f5",
+  },
+  tr: {
+    borderBottomWidth: 1,
+    borderColor: "#ddd",
+  },
+  th: {
+    padding: 6,
+  },
+  td: {
+    padding: 6,
+  },
+} as const;
 
 const TypingIndicator = ({ isVisible }: TypingIndicatorProps) => {
   const [dots] = useState([
@@ -488,14 +576,15 @@ export default function ChatUI({
             isUser ? styles.userBubble : styles.assistantBubble,
           ]}
         >
-          <Text
-            style={[
-              styles.messageText,
-              isUser ? styles.userText : styles.assistantText,
-            ]}
-          >
-            {item.message}
-          </Text>
+          {isUser ? (
+            <Text style={[styles.messageText, styles.userText]}>
+              {item.message}
+            </Text>
+          ) : (
+            <Markdown style={markdownStyles} mergeStyle={true}>
+              {item.message}
+            </Markdown>
+          )}
         </View>
         {isUser && (
           <View style={styles.userAvatar}>
@@ -510,12 +599,22 @@ export default function ChatUI({
 
   return (
     <View style={styles.overlay}>
+      <TouchableWithoutFeedback onPress={onClose}>
+        <View style={styles.overlayTouchable} />
+      </TouchableWithoutFeedback>
       <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={{ flex: 1, justifyContent: "flex-end" }}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 10 : 0}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={styles.keyboardAvoidingView}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
       >
-        <View style={styles.chatWrapper}>
+        <View
+          style={[
+            styles.chatWrapper,
+            {
+              marginBottom: keyboardHeight > 0 ? 0 : 80, // 80 accounts for tab bar height
+            },
+          ]}
+        >
           <View style={[styles.chatContainer, { height: DEFAULT_CHAT_HEIGHT }]}>
             {/* Header */}
             <View style={styles.header}>
@@ -672,9 +771,16 @@ const styles = StyleSheet.create<ChatStyles>({
     justifyContent: "flex-end",
     zIndex: 1000,
   },
+  overlayTouchable: {
+    flex: 1,
+  },
+  keyboardAvoidingView: {
+    width: "100%",
+    justifyContent: "flex-end",
+  },
   chatWrapper: {
     marginHorizontal: 16,
-    marginBottom: 16,
+    marginBottom: 80, // Default margin to account for tab bar
   },
   chatContainer: {
     backgroundColor: "#fff",
@@ -789,7 +895,9 @@ const styles = StyleSheet.create<ChatStyles>({
     backgroundColor: "#fff",
     borderRadius: 25,
     paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: "#eee",
   },
   input: {
     flex: 1,

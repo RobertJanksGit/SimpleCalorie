@@ -22,6 +22,7 @@ export default function AppLayout() {
       }}
     >
       <Stack.Screen name="index" />
+      <Stack.Screen name="history" />
       <Stack.Screen
         name="camera"
         options={{

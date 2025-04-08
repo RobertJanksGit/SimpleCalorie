@@ -4,12 +4,17 @@ import { collection, addDoc, doc, setDoc, getDoc } from "firebase/firestore";
 
 export interface PhotoMetadata {
   url: string;
-  timestamp: number;
+  timestamp: string;
   mealType: string;
   calories?: number;
   protein?: number;
   carbs?: number;
   fat?: number;
+  status: string;
+  foodName: string;
+  fiber: number;
+  sugar: number;
+  updatedAt: string;
 }
 
 export class PhotoService {
@@ -79,8 +84,17 @@ export class PhotoService {
       // Create metadata object
       const photoMetadata: PhotoMetadata = {
         url,
-        timestamp,
+        timestamp: new Date().toISOString(),
         mealType,
+        status: "pending",
+        foodName: "Analyzing...",
+        calories: 0,
+        protein: 0,
+        carbs: 0,
+        fat: 0,
+        fiber: 0,
+        sugar: 0,
+        updatedAt: new Date().toISOString(),
       };
 
       // Store metadata in Firestore
