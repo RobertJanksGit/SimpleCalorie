@@ -54,6 +54,7 @@ interface FoodAnalysis {
   portionEstimate: string;
   healthScore: number;
   warnings: string[];
+  analysisNotes: string;
 }
 
 interface DailyTotals {
@@ -75,13 +76,22 @@ export const healthCheck = onRequest(
   }
 );
 
-// Add this helper function at the top level
+// Add timezone offset constant (for Eastern Time, UTC-4)
+const TIMEZONE_OFFSET = -4;
+
+// Update getLocalDate function to use specific timezone
 function getLocalDate(): string {
-  const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  // Get current date in UTC
+  const now = new Date();
+
+  // Calculate the offset in milliseconds
+  const offsetMs = TIMEZONE_OFFSET * 60 * 60 * 1000;
+
+  // Create a new date by subtracting the offset
+  const localDate = new Date(now.getTime() + offsetMs);
+
+  // Format as YYYY-MM-DD using UTC methods to avoid any additional timezone conversions
+  return localDate.toISOString().split("T")[0];
 }
 
 /**
@@ -107,14 +117,14 @@ async function analyzeFoodPhoto(storagePath: string): Promise<FoodAnalysis> {
         {
           role: "system",
           content:
-            'You are a nutrition analysis assistant. Analyze food images and provide detailed nutritional information in valid JSON format ONLY. Your response must be parseable by JSON.parse(). If you cannot confidently identify the food or estimate its nutritional content, respond with {"error": "reason for failure"}. Follow this exact format for successful analysis: {"foodName": "name", "servingSize": "size", "calories": number, "protein": number, "carbs": number, "fat": number, "fiber": number, "sugar": number, "confidence": number, "ingredients": ["item1","item2"], "mealType": "type", "portionEstimate": "estimate", "healthScore": number, "warnings": ["warning1"] }',
+            'You are a nutrition analysis assistant. Your primary task is to analyze food images and provide detailed nutritional information in valid JSON format ONLY. Your response must be parseable by JSON.parse(). First, determine if the image contains food. If the image does not contain food or is too blurry/unclear, respond with {"error": "No food detected in image"}. For food images, assess your confidence in the analysis on a scale of 0-1. If you can identify the food but are less certain about portions or exact nutritional content, still provide an estimate but with a lower confidence score. Follow this exact format: {"foodName": "name", "servingSize": "size", "calories": number, "protein": number, "carbs": number, "fat": number, "fiber": number, "sugar": number, "confidence": number (0-1), "ingredients": ["item1","item2"], "mealType": "type", "portionEstimate": "estimate", "healthScore": number (0-100), "warnings": ["warning1"], "analysisNotes": "Any specific notes about the analysis confidence or limitations"}',
         },
         {
           role: "user",
           content: [
             {
               type: "text",
-              text: "Analyze this food photo and provide detailed nutritional information in JSON format. If you cannot confidently identify the food or estimate its nutritional content, respond with an error. Be conservative with portion sizes and nutritional estimates.",
+              text: "Analyze this image. First determine if it contains food. If it does, provide nutritional analysis. Be conservative with portion sizes and nutritional estimates. Include any uncertainty in the confidence score and analysis notes.",
             },
             {
               type: "image_url",
@@ -138,14 +148,9 @@ async function analyzeFoodPhoto(storagePath: string): Promise<FoodAnalysis> {
 
     let analysis = JSON.parse(content);
 
-    // Check if AI returned an error
+    // Check if AI returned an error (no food detected)
     if (analysis.error) {
-      throw new Error(`AI Analysis Failed: ${analysis.error}`);
-    }
-
-    // Check confidence threshold
-    if (Number(analysis.confidence) < 0.6) {
-      throw new Error("Low confidence in food analysis");
+      throw new Error(analysis.error);
     }
 
     // Validate and cap nutritional values
@@ -169,16 +174,12 @@ async function analyzeFoodPhoto(storagePath: string): Promise<FoodAnalysis> {
         100
       ),
       warnings: Array.isArray(analysis.warnings) ? analysis.warnings : [],
+      analysisNotes: analysis.analysisNotes || "",
     };
 
-    // Reject if essential values are missing or zero
-    if (
-      validatedAnalysis.calories === 0 ||
-      (validatedAnalysis.protein === 0 &&
-        validatedAnalysis.carbs === 0 &&
-        validatedAnalysis.fat === 0)
-    ) {
-      throw new Error("Unable to determine nutritional content");
+    // Only reject if no calories or all macros are zero
+    if (validatedAnalysis.calories === 0) {
+      throw new Error("Unable to determine caloric content");
     }
 
     return validatedAnalysis;
@@ -221,7 +222,23 @@ export const analyzePhoto = onObjectFinalized(
 
       const userId = pathParts[0];
       const timestamp = pathParts[1].split(".")[0];
-      const date = getLocalDate(); // Use local date
+
+      // Log current time in UTC and local
+      const utcNow = new Date();
+      logger.info("Time debug", {
+        utcTime: utcNow.toISOString(),
+        utcHours: utcNow.getUTCHours(),
+        localHours: utcNow.getHours(),
+        timezoneOffset: utcNow.getTimezoneOffset(),
+      });
+
+      const date = getLocalDate();
+      logger.info("Date calculation", {
+        calculatedDate: date,
+        userId,
+        timestamp,
+        rawTimestamp: new Date().toISOString(),
+      });
 
       try {
         // Analyze the photo using OpenAI
@@ -231,6 +248,13 @@ export const analyzePhoto = onObjectFinalized(
         const publicUrl = `https://firebasestorage.googleapis.com/v0/b/${
           event.data.bucket
         }/o/${encodeURIComponent(event.data.name)}?alt=media`;
+
+        // Add debug logging for the URL
+        logger.info("Generated photo URL", {
+          bucket: event.data.bucket,
+          name: event.data.name,
+          publicUrl: publicUrl,
+        });
 
         // Calculate additional metrics
         const totalMacros =
@@ -428,7 +452,7 @@ export const parseMealAdjustment = onRequest(
 
         // Use OpenAI to parse the user input
         const completion = await openai.chat.completions.create({
-          model: "gpt-4-turbo-preview",
+          model: "gpt-4o-mini",
           messages: [
             {
               role: "system",

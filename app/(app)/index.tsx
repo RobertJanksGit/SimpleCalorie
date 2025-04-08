@@ -31,6 +31,7 @@ import {
   deleteDoc,
   updateDoc,
   getDoc,
+  onSnapshot,
 } from "firebase/firestore";
 import {
   GestureHandlerRootView,
@@ -56,6 +57,8 @@ interface Meal {
   fat: number;
   id: string;
   photoUrl?: string;
+  confidence?: number;
+  analysisNotes?: string;
 }
 
 interface EditModalProps {
@@ -95,22 +98,23 @@ export default function HomeScreen() {
 
   // Fetch meals for today
   useEffect(() => {
-    const fetchMeals = async () => {
-      if (!user?.uid) return;
+    if (!user?.uid) return;
 
-      const date = getLocalDate();
-      const mealsPath = `users/${user.uid}/logs/${date}/meals`;
-      const mealsRef = collection(db, mealsPath);
-      const q = query(mealsRef, orderBy("timestamp", "desc"));
+    const date = getLocalDate();
+    const mealsPath = `users/${user.uid}/logs/${date}/meals`;
+    const mealsRef = collection(db, mealsPath);
+    const q = query(mealsRef, orderBy("timestamp", "desc"));
 
-      try {
-        const snapshot = await getDocs(q);
+    // Set up real-time listener
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
         const fetchedMeals = snapshot.docs.map((doc) => {
           const data = doc.data();
           return {
             id: doc.id,
             type: data.mealType || "Meal",
-            name: data.name || "Meal",
+            name: data.foodName || "Meal",
             time: new Date(data.timestamp).toLocaleTimeString([], {
               hour: "numeric",
               minute: "2-digit",
@@ -120,15 +124,19 @@ export default function HomeScreen() {
             carbs: data.carbs || 0,
             fat: data.fat || 0,
             photoUrl: data.photoUrl || null,
+            confidence: data.confidence || undefined,
+            analysisNotes: data.analysisNotes || undefined,
           };
         });
         setMeals(fetchedMeals);
-      } catch (error) {
+      },
+      (error) => {
         console.error("Error fetching meals:", error);
       }
-    };
+    );
 
-    fetchMeals();
+    // Cleanup subscription on unmount
+    return () => unsubscribe();
   }, [user?.uid]);
 
   const handleDeleteMeal = async (mealId: string) => {
@@ -443,6 +451,20 @@ export default function HomeScreen() {
       );
     };
 
+    // Function to get confidence indicator color
+    const getConfidenceColor = (confidence: number = 0) => {
+      if (confidence >= 0.8) return "#22c55e"; // Green for high confidence
+      if (confidence >= 0.6) return "#eab308"; // Yellow for medium confidence
+      return "#ef4444"; // Red for low confidence
+    };
+
+    // Function to get confidence label
+    const getConfidenceLabel = (confidence: number = 0) => {
+      if (confidence >= 0.8) return "High";
+      if (confidence >= 0.6) return "Medium";
+      return "Low";
+    };
+
     return (
       <Swipeable
         key={meal.id}
@@ -462,12 +484,29 @@ export default function HomeScreen() {
           )}
           <View style={styles.mealContent}>
             <View style={styles.mealInfo}>
-              <Text style={styles.mealType}>{meal.type}</Text>
+              <View style={styles.mealHeader}>
+                <Text style={styles.mealType}>{meal.type}</Text>
+                {meal.confidence !== undefined && (
+                  <View
+                    style={[
+                      styles.confidenceTag,
+                      { backgroundColor: getConfidenceColor(meal.confidence) },
+                    ]}
+                  >
+                    <Text style={styles.confidenceText}>
+                      {getConfidenceLabel(meal.confidence)} Confidence
+                    </Text>
+                  </View>
+                )}
+              </View>
               <Text style={styles.mealName}>{meal.name}</Text>
               <Text style={styles.macroText}>
                 Protein: {meal.protein}g • Carbs: {meal.carbs}g • Fat:{" "}
                 {meal.fat}g
               </Text>
+              {meal.analysisNotes && (
+                <Text style={styles.analysisNotes}>{meal.analysisNotes}</Text>
+              )}
             </View>
             <View style={styles.mealRight}>
               <Text style={styles.mealTime}>{meal.time}</Text>
@@ -811,6 +850,12 @@ const styles = StyleSheet.create({
     flex: 1,
     marginRight: 16,
   },
+  mealHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 4,
+  },
   mealType: {
     fontSize: 16,
     fontWeight: "600",
@@ -957,5 +1002,21 @@ const styles = StyleSheet.create({
   },
   saveButtonText: {
     color: "white",
+  },
+  confidenceTag: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
+  },
+  confidenceText: {
+    color: "white",
+    fontSize: 12,
+    fontWeight: "500",
+  },
+  analysisNotes: {
+    fontSize: 12,
+    color: "#666",
+    fontStyle: "italic",
+    marginTop: 4,
   },
 });
