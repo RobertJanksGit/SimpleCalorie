@@ -85,6 +85,8 @@ export default function HomeScreen() {
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editingMeal, setEditingMeal] = useState<Meal | null>(null);
   const swipeableRefs = useRef<{ [key: string]: Swipeable | null }>({});
+  const gestureStateRef = useRef<{ isGesture: boolean }>({ isGesture: false });
+  const [expandedMealId, setExpandedMealId] = useState<string | null>(null);
 
   // Handle URL parameters
   useEffect(() => {
@@ -418,8 +420,17 @@ export default function HomeScreen() {
   };
 
   const renderMealCard = (meal: Meal) => {
+    const isExpanded = expandedMealId === meal.id;
+
+    const handleCardPress = () => {
+      if (!gestureStateRef.current.isGesture) {
+        setExpandedMealId(isExpanded ? null : meal.id);
+      }
+    };
+
     const renderRightActions = (
-      progress: Animated.AnimatedInterpolation<number>
+      progress: Animated.AnimatedInterpolation<number>,
+      dragX: Animated.AnimatedInterpolation<number>
     ) => {
       const trans = progress.interpolate({
         inputRange: [0, 1],
@@ -451,38 +462,40 @@ export default function HomeScreen() {
       );
     };
 
-    // Function to get confidence indicator color
-    const getConfidenceColor = (confidence: number = 0) => {
-      if (confidence >= 0.8) return "#22c55e"; // Green for high confidence
-      if (confidence >= 0.6) return "#eab308"; // Yellow for medium confidence
-      return "#ef4444"; // Red for low confidence
-    };
-
-    // Function to get confidence label
-    const getConfidenceLabel = (confidence: number = 0) => {
-      if (confidence >= 0.8) return "High";
-      if (confidence >= 0.6) return "Medium";
-      return "Low";
-    };
-
     return (
       <Swipeable
         key={meal.id}
         ref={(ref) => (swipeableRefs.current[meal.id] = ref)}
         renderRightActions={renderRightActions}
         rightThreshold={40}
-        onSwipeableOpen={() => setSelectedMealId(meal.id)}
-        onSwipeableClose={() => setSelectedMealId(null)}
+        onSwipeableWillOpen={() => {
+          gestureStateRef.current.isGesture = true;
+        }}
+        onSwipeableOpen={() => {
+          setSelectedMealId(meal.id);
+        }}
+        onSwipeableClose={() => {
+          setSelectedMealId(null);
+          // Reset gesture state after a delay
+          setTimeout(() => {
+            gestureStateRef.current.isGesture = false;
+          }, 100);
+        }}
+        overshootRight={false}
       >
-        <View style={styles.mealCard}>
-          {meal.photoUrl && (
-            <Image
-              source={{ uri: meal.photoUrl }}
-              style={styles.mealImage}
-              resizeMode="cover"
-            />
-          )}
+        <TouchableOpacity
+          style={styles.mealCard}
+          onPress={handleCardPress}
+          activeOpacity={0.7}
+        >
           <View style={styles.mealContent}>
+            {meal.photoUrl && (
+              <Image
+                source={{ uri: meal.photoUrl }}
+                style={styles.mealImage}
+                resizeMode="cover"
+              />
+            )}
             <View style={styles.mealInfo}>
               <View style={styles.mealHeader}>
                 <Text style={styles.mealType}>{meal.type}</Text>
@@ -504,18 +517,34 @@ export default function HomeScreen() {
                 Protein: {meal.protein}g • Carbs: {meal.carbs}g • Fat:{" "}
                 {meal.fat}g
               </Text>
-              {meal.analysisNotes && (
-                <Text style={styles.analysisNotes}>{meal.analysisNotes}</Text>
-              )}
             </View>
             <View style={styles.mealRight}>
               <Text style={styles.mealTime}>{meal.time}</Text>
               <Text style={styles.mealCalories}>{meal.calories} cal</Text>
             </View>
           </View>
-        </View>
+          {isExpanded && meal.analysisNotes && (
+            <View style={styles.analysisContainer}>
+              <Text style={styles.analysisNotes}>{meal.analysisNotes}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
       </Swipeable>
     );
+  };
+
+  // Function to get confidence indicator color
+  const getConfidenceColor = (confidence: number = 0) => {
+    if (confidence >= 0.8) return "#22c55e"; // Green for high confidence
+    if (confidence >= 0.6) return "#eab308"; // Yellow for medium confidence
+    return "#ef4444"; // Red for low confidence
+  };
+
+  // Function to get confidence label
+  const getConfidenceLabel = (confidence: number = 0) => {
+    if (confidence >= 0.8) return "High";
+    if (confidence >= 0.6) return "Medium";
+    return "Low";
   };
 
   return (
@@ -836,19 +865,20 @@ const styles = StyleSheet.create({
     elevation: 3,
     overflow: "hidden",
   },
-  mealImage: {
-    width: "100%",
-    height: 160,
-    backgroundColor: "#f0f0f0",
-  },
   mealContent: {
     flexDirection: "row",
-    justifyContent: "space-between",
-    padding: 16,
+    alignItems: "center",
+    padding: 12,
+  },
+  mealImage: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    marginRight: 12,
   },
   mealInfo: {
     flex: 1,
-    marginRight: 16,
+    marginRight: 12,
   },
   mealHeader: {
     flexDirection: "row",
@@ -1013,10 +1043,16 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "500",
   },
+  analysisContainer: {
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: "#f0f0f0",
+  },
   analysisNotes: {
-    fontSize: 12,
+    fontSize: 14,
     color: "#666",
     fontStyle: "italic",
-    marginTop: 4,
   },
 });
