@@ -9,6 +9,7 @@ import {
   TextInput,
   Modal,
   Image,
+  ActivityIndicator,
 } from "react-native";
 import {
   SafeAreaView,
@@ -87,6 +88,9 @@ export default function HomeScreen() {
   const swipeableRefs = useRef<{ [key: string]: Swipeable | null }>({});
   const gestureStateRef = useRef<{ isGesture: boolean }>({ isGesture: false });
   const [expandedMealId, setExpandedMealId] = useState<string | null>(null);
+  const [imageLoadingStates, setImageLoadingStates] = useState<{
+    [key: string]: boolean;
+  }>({});
 
   // Handle URL parameters
   useEffect(() => {
@@ -428,6 +432,14 @@ export default function HomeScreen() {
       }
     };
 
+    const handleImageLoadStart = (mealId: string) => {
+      setImageLoadingStates((prev) => ({ ...prev, [mealId]: true }));
+    };
+
+    const handleImageLoadEnd = (mealId: string) => {
+      setImageLoadingStates((prev) => ({ ...prev, [mealId]: false }));
+    };
+
     const renderRightActions = (
       progress: Animated.AnimatedInterpolation<number>,
       dragX: Animated.AnimatedInterpolation<number>
@@ -490,11 +502,20 @@ export default function HomeScreen() {
         >
           <View style={styles.mealContent}>
             {meal.photoUrl && (
-              <Image
-                source={{ uri: meal.photoUrl }}
-                style={styles.mealImage}
-                resizeMode="cover"
-              />
+              <View style={styles.mealImageContainer}>
+                <Image
+                  source={{ uri: meal.photoUrl }}
+                  style={styles.mealImage}
+                  resizeMode="cover"
+                  onLoadStart={() => handleImageLoadStart(meal.id)}
+                  onLoadEnd={() => handleImageLoadEnd(meal.id)}
+                />
+                {imageLoadingStates[meal.id] && (
+                  <View style={styles.imageLoadingContainer}>
+                    <ActivityIndicator size="small" color="#4CAF50" />
+                  </View>
+                )}
+              </View>
             )}
             <View style={styles.mealInfo}>
               <View style={styles.mealHeader}>
@@ -870,11 +891,27 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 12,
   },
-  mealImage: {
+  mealImageContainer: {
     width: 60,
     height: 60,
     borderRadius: 30,
     marginRight: 12,
+    overflow: "hidden",
+    position: "relative",
+  },
+  mealImage: {
+    width: "100%",
+    height: "100%",
+  },
+  imageLoadingContainer: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(255, 255, 255, 0.8)",
+    justifyContent: "center",
+    alignItems: "center",
   },
   mealInfo: {
     flex: 1,
