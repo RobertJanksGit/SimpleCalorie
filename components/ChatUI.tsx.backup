@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
-  FlatList,
+  ScrollView,
   TextInput,
   TouchableOpacity,
   StyleSheet,
@@ -14,7 +14,6 @@ import {
   ViewStyle,
   TextStyle,
   Animated,
-  KeyboardAvoidingView,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { db } from "../firebaseConfig";
@@ -175,7 +174,7 @@ export default function ChatUI({
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [currentMealId, setCurrentMealId] = useState<string | null>(null);
   const [isTyping, setIsTyping] = useState(false);
-  const flatListRef = useRef<FlatList>(null);
+  const scrollViewRef = useRef<ScrollView>(null);
   const { totals, goals, getRemainingCalories, getMacroPercentages } =
     useDailyTotals(userId);
 
@@ -286,14 +285,31 @@ export default function ChatUI({
     }
   }, [isVisible, totals, goals]);
 
-  // Handle keyboard showing/hiding
+  // Calculate chat height
+  const getChatHeight = () => {
+    // Fixed height regardless of keyboard
+    return DEFAULT_CHAT_HEIGHT;
+  };
+
+  // Add explicit scroll handler to ensure scrolling works
+  const scrollToBottomWithTimeout = () => {
+    setTimeout(() => {
+      if (scrollViewRef.current) {
+        scrollViewRef.current.scrollToEnd({ animated: true });
+      }
+    }, 200);
+  };
+
+  // Scroll to bottom when new messages are added
+  useEffect(() => {
+    if (messages.length > 0) {
+      scrollToBottomWithTimeout();
+    }
+  }, [messages]);
+
   useEffect(() => {
     const keyboardWillShow = (e: KeyboardEvent) => {
       setKeyboardHeight(e.endCoordinates.height);
-      // Scroll to bottom after keyboard appears
-      setTimeout(() => {
-        flatListRef.current?.scrollToEnd({ animated: true });
-      }, 100);
     };
 
     const keyboardWillHide = () => {
@@ -314,15 +330,6 @@ export default function ChatUI({
       hideSubscription.remove();
     };
   }, []);
-
-  // Scroll to bottom when new messages are added
-  useEffect(() => {
-    if (messages.length > 0) {
-      setTimeout(() => {
-        flatListRef.current?.scrollToEnd({ animated: true });
-      }, 100);
-    }
-  }, [messages]);
 
   const handleSendMessage = async () => {
     if (!inputText.trim() || loading) return;
@@ -398,7 +405,7 @@ export default function ChatUI({
     }
   };
 
-  const renderItem = ({ item }: { item: Message }) => {
+  const renderMessageItem = (item: Message) => {
     const isUser = item.sender === "user";
     const isAnalysis = !isUser && item.text.includes("logged your meal");
     const isNutrition =
@@ -406,7 +413,7 @@ export default function ChatUI({
     const isAdjustment = !isUser && item.isAdjustment;
 
     return (
-      <View style={styles.messageRow}>
+      <View style={styles.messageRow} key={item.id}>
         {!isUser && (
           <View style={styles.assistantAvatar}>
             <View style={styles.avatarImage}>
@@ -446,84 +453,75 @@ export default function ChatUI({
 
   if (!isVisible) return null;
 
+  const chatHeight = getChatHeight();
+
   return (
-    <View style={styles.overlay}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={{ flex: 1, justifyContent: "flex-end" }}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 10 : 0}
-      >
-        <View style={styles.chatWrapper}>
-          <View style={[styles.chatContainer, { height: DEFAULT_CHAT_HEIGHT }]}>
-            {/* Header */}
-            <View style={styles.header}>
-              <TouchableOpacity
-                onPress={onClose}
-                style={styles.closeButton}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              >
-                <Ionicons name="close" size={24} color="#666" />
-              </TouchableOpacity>
-            </View>
-
-            {/* Messages Container */}
-            <View style={styles.messageContainer}>
-              <FlatList
-                ref={flatListRef}
-                data={messages}
-                renderItem={renderItem}
-                keyExtractor={(item) => item.id}
-                contentContainerStyle={styles.messageList}
-                showsVerticalScrollIndicator={true}
-                scrollEnabled={true}
-                maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
-                ListFooterComponent={
-                  isTyping ? <TypingIndicator isVisible={true} /> : null
-                }
-                onContentSizeChange={() => {
-                  flatListRef.current?.scrollToEnd({ animated: true });
-                }}
-                onLayout={() => {
-                  flatListRef.current?.scrollToEnd({ animated: true });
-                }}
-              />
-            </View>
-
-            {/* Input Container */}
-            <View style={styles.inputContainer}>
-              <View style={styles.inputWrapper}>
-                <View style={styles.userAvatar}>
-                  <Ionicons name="happy" size={24} color="#999" />
-                </View>
-                <TextInput
-                  style={styles.input}
-                  value={inputText}
-                  onChangeText={setInputText}
-                  placeholder="Message"
-                  placeholderTextColor="#999"
-                  returnKeyType="send"
-                  blurOnSubmit={false}
-                  onSubmitEditing={handleSendMessage}
-                />
+    <TouchableWithoutFeedback onPress={onClose}>
+      <View style={styles.overlay}>
+        <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
+          <View
+            style={[styles.chatWrapper, { marginBottom: keyboardHeight + 16 }]}
+          >
+            <View style={[styles.chatContainer, { height: chatHeight }]}>
+              <View style={styles.header}>
                 <TouchableOpacity
-                  style={styles.sendButton}
-                  onPress={handleSendMessage}
-                  disabled={loading || inputText.trim() === ""}
+                  onPress={onClose}
+                  style={styles.closeButton}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 >
-                  <Ionicons
-                    name="arrow-forward"
-                    size={24}
-                    color={
-                      loading || inputText.trim() === "" ? "#ccc" : "white"
-                    }
-                  />
+                  <Ionicons name="close" size={24} color="#666" />
                 </TouchableOpacity>
+              </View>
+
+              <View style={styles.messageContainer}>
+                <ScrollView
+                  ref={scrollViewRef}
+                  style={{ flex: 1 }}
+                  contentContainerStyle={styles.messageList}
+                  showsVerticalScrollIndicator={true}
+                  scrollEnabled={true}
+                  bounces={true}
+                  alwaysBounceVertical={Platform.OS === "ios"}
+                  persistentScrollbar={true}
+                  onTouchStart={(e) => e.stopPropagation()}
+                >
+                  {messages.map(renderMessageItem)}
+                  {isTyping && <TypingIndicator isVisible={true} />}
+                </ScrollView>
+              </View>
+
+              <View style={styles.inputContainer}>
+                <View style={styles.inputWrapper}>
+                  <View style={styles.userAvatar}>
+                    <Ionicons name="happy" size={24} color="#999" />
+                  </View>
+                  <TextInput
+                    style={styles.input}
+                    value={inputText}
+                    onChangeText={setInputText}
+                    placeholder="Message"
+                    placeholderTextColor="#999"
+                  />
+                  <TouchableOpacity
+                    style={styles.sendButton}
+                    onPress={handleSendMessage}
+                    disabled={loading || inputText.trim() === ""}
+                  >
+                    <Ionicons
+                      name="arrow-forward"
+                      size={24}
+                      color={
+                        loading || inputText.trim() === "" ? "#ccc" : "white"
+                      }
+                    />
+                  </TouchableOpacity>
+                </View>
               </View>
             </View>
           </View>
-        </View>
-      </KeyboardAvoidingView>
-    </View>
+        </TouchableWithoutFeedback>
+      </View>
+    </TouchableWithoutFeedback>
   );
 }
 
@@ -537,6 +535,9 @@ const styles = StyleSheet.create<ChatStyles>({
     backgroundColor: "rgba(0, 0, 0, 0.5)",
     justifyContent: "flex-end",
     zIndex: 1000,
+  },
+  overlayTouchable: {
+    flex: 1,
   },
   chatWrapper: {
     marginHorizontal: 16,
@@ -570,11 +571,11 @@ const styles = StyleSheet.create<ChatStyles>({
   messageContainer: {
     flex: 1,
     width: "100%",
+    overflow: "hidden",
   },
   messageList: {
     paddingVertical: 16,
     paddingHorizontal: 16,
-    flexGrow: 1,
   },
   messageRow: {
     flexDirection: "row",
