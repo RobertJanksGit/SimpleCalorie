@@ -446,7 +446,10 @@ export default function HistoryScreen() {
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.tabItem, styles.chatTab]}
-            onPress={() => router.push("/?openChat=true")}
+            onPress={() => {
+              router.push("/");
+              router.setParams({ openChat: "true" });
+            }}
             activeOpacity={0.7}
           >
             <View style={styles.chatButton}>
@@ -460,7 +463,10 @@ export default function HistoryScreen() {
             <Ionicons name="stats-chart" size={24} color="#666" />
             <Text style={styles.tabText}>Insights</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.tabItem}>
+          <TouchableOpacity
+            style={styles.tabItem}
+            onPress={() => router.push("/profile")}
+          >
             <Ionicons name="person-outline" size={24} color="#666" />
             <Text style={styles.tabText}>Profile</Text>
           </TouchableOpacity>

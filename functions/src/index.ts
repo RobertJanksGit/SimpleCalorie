@@ -126,14 +126,14 @@ async function analyzeFoodPhoto(storagePath: string): Promise<FoodAnalysis> {
         {
           role: "system",
           content:
-            'You are a nutrition analysis assistant. Your primary task is to analyze food images and provide detailed nutritional information in valid JSON format ONLY. Your response must be parseable by JSON.parse(). First, determine if the image contains food. If the image does not contain food or is too blurry/unclear, respond with {"error": "No food detected in image"}. For food images, assess your confidence in the analysis on a scale of 0-1. If you can identify the food but are less certain about portions or exact nutritional content, still provide an estimate but with a lower confidence score. Follow this exact format: {"foodName": "name", "servingSize": "size", "calories": number, "protein": number, "carbs": number, "fat": number, "fiber": number, "sugar": number, "confidence": number (0-1), "ingredients": ["item1","item2"], "mealType": "type", "portionEstimate": "estimate", "healthScore": number (0-100), "warnings": ["warning1"], "analysisNotes": "Any specific notes about the analysis confidence or limitations"}',
+            'You are a nutrition analysis assistant. Your primary task is to analyze food images and provide detailed nutritional information in valid JSON format ONLY. Your response must be parseable by JSON.parse(). First, determine if the image contains food. If the image does not contain food or is too blurry/unclear, respond with {"error": "No food detected in image"}. For food images, assess your confidence in the analysis on a scale of 0-1. Assume the portion sizes based on the visual appearance of the food. Make sure to increase the portion size if there are multiple servings in the image.(i.e. if there are 2 chocolate chip cookies in the same bag, the serving size should be 2). If you can identify the food but are less certain about portions or exact nutritional content, still provide an estimate but with a lower confidence score. Follow this exact format: {"foodName": "name", "servingSize": "size", "calories": number, "protein": number, "carbs": number, "fat": number, "fiber": number, "sugar": number, "confidence": number (0-1), "ingredients": ["item1","item2"], "mealType": "type", "portionEstimate": "estimate", "healthScore": number (0-100), "warnings": ["warning1"], "analysisNotes": "Any specific notes about the analysis confidence or limitations"}',
         },
         {
           role: "user",
           content: [
             {
               type: "text",
-              text: "Analyze this image. First determine if it contains food. If it does, provide nutritional analysis. Be conservative with portion sizes and nutritional estimates. Include any uncertainty in the confidence score and analysis notes.",
+              text: "Analyze this image. First determine if it contains food. If it does, provide nutritional analysis. Include any uncertainty in the confidence score and analysis notes.",
             },
             {
               type: "image_url",
@@ -305,15 +305,26 @@ export const analyzePhoto = onObjectFinalized(
         const pendingMeals = allPendingMeals.docs.filter((doc) => {
           try {
             const mealData = doc.data();
-            // Parse the ISO timestamp to milliseconds
-            const mealTimestamp = new Date(mealData.timestamp).getTime();
-            // Compare with the file timestamp (within 30 seconds)
-            const timeDiffMs = Math.abs(mealTimestamp - fileTimestampMs);
-            return timeDiffMs < 30000; // 30 seconds
+            // Use the raw uploadTimestamp for comparison if available, otherwise fall back to timestamp
+            const mealTimestamp =
+              mealData.uploadTimestamp ||
+              new Date(mealData.timestamp).getTime();
+
+            logger.info("Comparing timestamps", {
+              mealTimestamp,
+              fileTimestampMs,
+              mealTime: new Date(mealTimestamp).toISOString(),
+              fileTime: new Date(fileTimestampMs).toISOString(),
+              diff: Math.abs(mealTimestamp - fileTimestampMs),
+            });
+
+            // Consider it a match if it's within 5 minutes (300000ms)
+            return Math.abs(mealTimestamp - fileTimestampMs) < 300000;
           } catch (parseErr) {
             logger.error("Error parsing timestamp for meal", {
               docId: doc.id,
               timestamp: doc.data().timestamp,
+              uploadTimestamp: doc.data().uploadTimestamp,
               errorMessage:
                 parseErr instanceof Error ? parseErr.message : String(parseErr),
             });
@@ -329,9 +340,10 @@ export const analyzePhoto = onObjectFinalized(
           pendingMeals: pendingMeals.map((doc) => ({
             id: doc.id,
             timestamp: doc.data().timestamp,
-            mealTimestamp: new Date(doc.data().timestamp).getTime(),
+            uploadTimestamp: doc.data().uploadTimestamp,
             diff: Math.abs(
-              new Date(doc.data().timestamp).getTime() - fileTimestampMs
+              (doc.data().uploadTimestamp ||
+                new Date(doc.data().timestamp).getTime()) - fileTimestampMs
             ),
           })),
         });
@@ -339,22 +351,49 @@ export const analyzePhoto = onObjectFinalized(
         // Use batch for atomic operations
         const batch = db.batch();
 
-        // Delete pending meals that match
-        pendingMeals.forEach((doc) => {
-          logger.info("Deleting pending meal", { id: doc.id });
-          batch.delete(doc.ref);
-        });
+        if (pendingMeals.length > 0) {
+          // Update the first matching pending meal instead of deleting it
+          const pendingMealDoc = pendingMeals[0];
+          logger.info("Updating pending meal with analysis results", {
+            id: pendingMealDoc.id,
+            calories: analysis.calories,
+          });
 
-        // Create new document with analysis results
-        const newMealRef = userMealRef.doc();
-        batch.set(newMealRef, {
-          ...analysis,
-          ...macroPercentages,
-          photoUrl: publicUrl,
-          timestamp: new Date().toISOString(),
-          status: "completed",
-          updatedAt: new Date().toISOString(),
-        });
+          batch.update(pendingMealDoc.ref, {
+            ...analysis,
+            ...macroPercentages,
+            photoUrl: publicUrl,
+            status: "completed",
+            updatedAt: new Date().toISOString(),
+          });
+
+          // Delete any additional matching pending meals if there are more than one
+          for (let i = 1; i < pendingMeals.length; i++) {
+            logger.info("Deleting additional pending meal", {
+              id: pendingMeals[i].id,
+            });
+            batch.delete(pendingMeals[i].ref);
+          }
+        } else {
+          // If no pending meals match, create a new document with analysis results
+          const newMealRef = userMealRef.doc();
+          logger.info(
+            "No matching pending meals found, creating new document",
+            {
+              newDocId: newMealRef.id,
+              calories: analysis.calories,
+            }
+          );
+
+          batch.set(newMealRef, {
+            ...analysis,
+            ...macroPercentages,
+            photoUrl: publicUrl,
+            timestamp: new Date().toISOString(),
+            status: "completed",
+            updatedAt: new Date().toISOString(),
+          });
+        }
 
         // Commit the batch
         await batch.commit();
@@ -388,15 +427,26 @@ export const analyzePhoto = onObjectFinalized(
         const pendingMeals = allPendingMeals.docs.filter((doc) => {
           try {
             const mealData = doc.data();
-            const mealTimestamp = new Date(mealData.timestamp).getTime();
-            const timeDiffMs = Math.abs(mealTimestamp - fileTimestampMs);
+            // Use the raw uploadTimestamp for comparison if available, otherwise fall back to timestamp
+            const mealTimestamp =
+              mealData.uploadTimestamp ||
+              new Date(mealData.timestamp).getTime();
 
-            // Consider it a match if it's within 30 seconds (30000ms)
-            return timeDiffMs < 30000;
+            logger.info("Comparing timestamps for error case", {
+              mealTimestamp,
+              fileTimestampMs,
+              mealTime: new Date(mealTimestamp).toISOString(),
+              fileTime: new Date(fileTimestampMs).toISOString(),
+              diff: Math.abs(mealTimestamp - fileTimestampMs),
+            });
+
+            // Consider it a match if it's within 5 minutes
+            return Math.abs(mealTimestamp - fileTimestampMs) < 300000;
           } catch (parseErr) {
             logger.error("Error parsing timestamp for meal", {
               docId: doc.id,
               timestamp: doc.data().timestamp,
+              uploadTimestamp: doc.data().uploadTimestamp,
               errorMessage:
                 parseErr instanceof Error ? parseErr.message : String(parseErr),
             });
@@ -419,29 +469,85 @@ export const analyzePhoto = onObjectFinalized(
               : String(analysisError),
         });
 
-        // Check if it's a "No food detected" error
-        const errorMessage =
-          analysisError instanceof Error
-            ? analysisError.message
-            : String(analysisError);
-        const isNoFoodError = errorMessage.includes("No food detected");
+        // Check if we have a valid JSON response with calories
+        let isNoFoodError = true; // Default to true (will show notification)
+        let hasCalories = false; // Track if we have valid calorie data
+        try {
+          const errorContent =
+            analysisError instanceof Error
+              ? analysisError.message
+              : String(analysisError);
+          logger.info("Analyzing error content:", { errorContent });
+
+          try {
+            const parsedResponse = JSON.parse(errorContent);
+            logger.info("Successfully parsed error as JSON:", {
+              parsedResponse,
+            });
+
+            // If we have a valid JSON object with calories, don't show the notification
+            if (parsedResponse && typeof parsedResponse === "object") {
+              if ("calories" in parsedResponse) {
+                logger.info("Found 'calories' in parsed response", {
+                  calories: parsedResponse.calories,
+                  hasCalories: !!parsedResponse.calories,
+                });
+                isNoFoodError = false;
+                hasCalories = !!parsedResponse.calories;
+              } else {
+                logger.info("No 'calories' found in parsed response", {
+                  keys: Object.keys(parsedResponse),
+                });
+              }
+            }
+          } catch (parseError) {
+            logger.info("Failed to parse error as JSON:", {
+              parseError:
+                parseError instanceof Error
+                  ? parseError.message
+                  : String(parseError),
+            });
+          }
+        } catch (outerError) {
+          logger.error("Error in JSON parsing logic:", {
+            error:
+              outerError instanceof Error
+                ? outerError.message
+                : String(outerError),
+          });
+          // If we can't parse the response as JSON, keep isNoFoodError as true
+        }
+
+        logger.info("Error analysis result:", {
+          isNoFoodError,
+          hasCalories,
+        });
 
         // Use batch for atomic operations
         const batch = db.batch();
 
         pendingMeals.forEach((doc) => {
           if (isNoFoodError) {
-            // Delete the meal document if no food was detected
-            logger.info("Deleting meal document - No food detected", {
+            // Only for true "no food" errors or severe errors, set status to failed
+            logger.info("Updating meal as failed - No food detected", {
               id: doc.id,
             });
-            batch.delete(doc.ref);
-          } else {
-            // For other errors, mark as failed
-            logger.info("Marking meal as failed", { id: doc.id });
             batch.update(doc.ref, {
               status: "failed",
-              errorMessage: errorMessage,
+              errorMessage: "No food detected in image",
+              updatedAt: new Date().toISOString(),
+            });
+          } else {
+            // For other errors, mark as failed but keep the document
+            logger.info("Updating meal as failed - Analysis error", {
+              id: doc.id,
+            });
+            batch.update(doc.ref, {
+              status: "failed",
+              errorMessage:
+                analysisError instanceof Error
+                  ? analysisError.message
+                  : String(analysisError),
               updatedAt: new Date().toISOString(),
             });
           }
@@ -453,7 +559,10 @@ export const analyzePhoto = onObjectFinalized(
           userId,
           date,
           fileTimestampMs,
-          errorMessage: errorMessage,
+          errorMessage:
+            analysisError instanceof Error
+              ? analysisError.message
+              : String(analysisError),
           isNoFoodError: isNoFoodError,
         });
 

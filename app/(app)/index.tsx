@@ -78,9 +78,11 @@ interface EditModalProps {
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const { photoTaken: photoTakenParam } = useLocalSearchParams<{
-    photoTaken: string;
-  }>();
+  const { photoTaken: photoTakenParam, openChat: openChatParam } =
+    useLocalSearchParams<{
+      photoTaken: string;
+      openChat: string;
+    }>();
   const [photoTaken, setPhotoTaken] = useState(false);
   const [isChatVisible, setIsChatVisible] = useState(false);
   const { totals, goals, loading, getRemainingCalories, getMacroPercentages } =
@@ -95,6 +97,7 @@ export default function HomeScreen() {
   const [imageLoadingStates, setImageLoadingStates] = useState<{
     [key: string]: boolean;
   }>({});
+  const [alertShown, setAlertShown] = useState(false);
 
   // Fetch meals for today
   useEffect(() => {
@@ -105,30 +108,51 @@ export default function HomeScreen() {
     const mealsRef = collection(db, mealsPath);
     const q = query(mealsRef, orderBy("timestamp", "desc"));
 
-    // Track error alerts to prevent duplicates
-    let alertShown = false;
-
     // Set up real-time listener
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
+        // Add debug logging for all snapshot events
+        console.log("Firestore snapshot received with changes:", {
+          docChanges: snapshot.docChanges().length,
+          totalDocs: snapshot.docs.length,
+        });
+
         // Process document changes first to detect errors before rendering
         snapshot.docChanges().forEach((change) => {
-          // Only handle "removed" events for meals that were pending
-          if (change.type === "removed") {
+          console.log("Document change event:", {
+            type: change.type,
+            id: change.doc.id,
+            data: change.doc.data(),
+          });
+
+          // Instead of checking for removed documents, check for failed status
+          if (change.type === "modified" || change.type === "added") {
             const data = change.doc.data();
-            if (data.status === "pending") {
-              // This is likely a "No food detected" case - Cloud Function is deleting the document
+            // Check if this is a meal that was marked as failed with "No food detected"
+            if (
+              data &&
+              data.status === "failed" &&
+              data.errorMessage &&
+              data.errorMessage.includes("No food detected")
+            ) {
+              console.log("No food detected error:", {
+                id: change.doc.id,
+                errorMessage: data.errorMessage,
+              });
+
+              // Only show the notification if we haven't shown one recently
               if (!alertShown) {
+                console.log("Showing No Food Detected notification");
                 Alert.alert(
                   "No Food Detected",
                   "We couldn't detect any food in the image. Please try taking a clearer photo of your meal."
                 );
-                alertShown = true;
+                setAlertShown(true);
 
                 // Reset the alert flag after a delay
                 setTimeout(() => {
-                  alertShown = false;
+                  setAlertShown(false);
                 }, 5000);
               }
             }
@@ -143,16 +167,17 @@ export default function HomeScreen() {
               const errorMsg = data.errorMessage || "Unknown error";
 
               // Only show alert if we haven't shown one recently
+              // and if it's not a "No food detected" error (which we handled above)
               if (!alertShown && !errorMsg.includes("No food detected")) {
                 Alert.alert(
                   "Analysis Failed",
                   "Failed to analyze the meal. Please try again."
                 );
-                alertShown = true;
+                setAlertShown(true);
 
                 // Reset the alert flag after a delay
                 setTimeout(() => {
-                  alertShown = false;
+                  setAlertShown(false);
                 }, 5000);
               }
               return null;
@@ -190,14 +215,18 @@ export default function HomeScreen() {
     );
 
     return () => unsubscribe();
-  }, [user?.uid]);
+  }, [user?.uid, alertShown]);
 
   // Remove the separate analyzing state effect since we're handling it in the meals listener
   useEffect(() => {
     if (photoTakenParam === "true") {
       setPhotoTaken(true);
     }
-  }, [photoTakenParam]);
+
+    if (openChatParam === "true") {
+      setIsChatVisible(true);
+    }
+  }, [photoTakenParam, openChatParam]);
 
   const handleDeleteMeal = async (mealId: string) => {
     if (!user?.uid) return;
@@ -752,7 +781,7 @@ export default function HomeScreen() {
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.tabItem, styles.chatTab]}
-            onPress={() => router.push("/?openChat=true")}
+            onPress={handleOpenChat}
           >
             <View style={styles.chatButton}>
               <Ionicons name="chatbubble" size={24} color="white" />

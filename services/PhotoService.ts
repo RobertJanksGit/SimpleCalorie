@@ -5,6 +5,7 @@ import { collection, addDoc, doc, setDoc, getDoc } from "firebase/firestore";
 export interface PhotoMetadata {
   url: string;
   timestamp: string;
+  uploadTimestamp: number;
   mealType: string;
   calories?: number;
   protein?: number;
@@ -22,6 +23,18 @@ export class PhotoService {
 
   private constructor() {}
 
+  private static getLocalDate(): string {
+    const now = new Date();
+
+    const TIMEZONE_OFFSET = -4;
+
+    const offsetMs = TIMEZONE_OFFSET * 60 * 60 * 1000;
+
+    const localDate = new Date(now.getTime() + offsetMs);
+
+    return localDate.toISOString().split("T")[0];
+  }
+
   static getInstance(): PhotoService {
     if (!PhotoService.instance) {
       PhotoService.instance = new PhotoService();
@@ -38,6 +51,7 @@ export class PhotoService {
       console.log("Starting photo upload process...", {
         userId,
         mealType,
+        currentTime: new Date().toISOString(),
       });
 
       // Check if user document exists
@@ -55,7 +69,12 @@ export class PhotoService {
       // Generate a unique filename
       const timestamp = Date.now();
       const filename = `${userId}/${timestamp}.jpg`;
-      console.log("Generated filename:", filename);
+      console.log(
+        "Generated filename:",
+        filename,
+        "with timestamp:",
+        timestamp
+      );
 
       // Fetch the file and convert to blob
       console.log("Fetching photo from URI...");
@@ -85,6 +104,7 @@ export class PhotoService {
       const photoMetadata: PhotoMetadata = {
         url,
         timestamp: new Date().toISOString(),
+        uploadTimestamp: timestamp,
         mealType,
         status: "pending",
         foodName: "Analyzing...",
@@ -98,17 +118,21 @@ export class PhotoService {
       };
 
       // Store metadata in Firestore
-      const date = new Date().toISOString().split("T")[0];
+      const date = PhotoService.getLocalDate();
       console.log("Storing metadata in Firestore...", {
         userId,
         date,
         collectionPath: `users/${userId}/logs/${date}/meals`,
+        timestamp,
+        iso8601Time: new Date().toISOString(),
+        metadata: photoMetadata,
       });
-      await addDoc(
+
+      const docRef = await addDoc(
         collection(db, "users", userId, "logs", date, "meals"),
         photoMetadata
       );
-      console.log("Metadata stored successfully");
+      console.log("Metadata stored successfully with document ID:", docRef.id);
 
       return photoMetadata;
     } catch (error) {

@@ -290,7 +290,10 @@ export default function InsightsScreen() {
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.tabItem, styles.chatTab]}
-          onPress={() => router.push("/?openChat=true")}
+          onPress={() => {
+            router.push("/");
+            router.setParams({ openChat: "true" });
+          }}
         >
           <View style={styles.chatButton}>
             <Ionicons name="chatbubble" size={24} color="white" />
@@ -300,7 +303,10 @@ export default function InsightsScreen() {
           <Ionicons name="stats-chart" size={24} color="#4CAF50" />
           <Text style={[styles.tabText, { color: "#4CAF50" }]}>Insights</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem}>
+        <TouchableOpacity
+          style={styles.tabItem}
+          onPress={() => router.push("/profile")}
+        >
           <Ionicons name="person-outline" size={24} color="#666" />
           <Text style={styles.tabText}>Profile</Text>
         </TouchableOpacity>

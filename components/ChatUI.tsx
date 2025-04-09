@@ -40,8 +40,14 @@ import Markdown from "react-native-markdown-display";
 // Get screen dimensions
 const { width: screenWidth, height: screenHeight } = Dimensions.get("window");
 
-// Default chat height (about 60% of screen height)
-const DEFAULT_CHAT_HEIGHT = Math.min(screenHeight * 0.5, 400);
+// Chat height constraints (percentage of screen when keyboard is hidden)
+const MAX_CHAT_HEIGHT = Math.min(screenHeight * 0.6, 450); // Slightly larger
+const MIN_CHAT_HEIGHT = 250; // Ensure enough space for messages
+
+// Safety margins and spacing
+const TOP_MARGIN = 50; // Space from top of screen
+const BOTTOM_TAB_HEIGHT = 80; // Height of the tab bar
+const KEYBOARD_MARGIN = 10; // Additional margin above keyboard
 
 interface Message {
   id: string;
@@ -75,7 +81,7 @@ interface ChatResponse {
 type ChatStyles = {
   overlay: ViewStyle;
   overlayTouchable: ViewStyle;
-  keyboardAvoidingView: ViewStyle;
+  chatPositioner: ViewStyle;
   chatWrapper: ViewStyle;
   chatContainer: ViewStyle;
   header: ViewStyle;
@@ -280,6 +286,7 @@ export default function ChatUI({
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [isTyping, setIsTyping] = useState(false);
   const [showWelcome, setShowWelcome] = useState(false);
+  const [chatHeight, setChatHeight] = useState(MAX_CHAT_HEIGHT);
   const flatListRef = useRef<FlatList>(null);
   const { totals, goals } = useDailyTotals(userId);
   const { user, isAuthenticated } = useAuth();
@@ -380,7 +387,21 @@ export default function ChatUI({
   // Handle keyboard showing/hiding
   useEffect(() => {
     const keyboardWillShow = (e: KeyboardEvent) => {
-      setKeyboardHeight(e.endCoordinates.height);
+      const kbHeight = e.endCoordinates.height;
+      setKeyboardHeight(kbHeight);
+
+      // When keyboard appears, adjust height to maintain visibility
+      // Calculate usable height minus keyboard and safety margins
+      const availableHeight =
+        screenHeight - TOP_MARGIN - kbHeight - KEYBOARD_MARGIN;
+
+      // Ensure chat isn't too small
+      const newHeight = Math.max(
+        MIN_CHAT_HEIGHT,
+        Math.min(MAX_CHAT_HEIGHT, availableHeight)
+      );
+      setChatHeight(newHeight);
+
       // Scroll to bottom after keyboard appears
       setTimeout(() => {
         flatListRef.current?.scrollToEnd({ animated: true });
@@ -389,6 +410,7 @@ export default function ChatUI({
 
     const keyboardWillHide = () => {
       setKeyboardHeight(0);
+      setChatHeight(MAX_CHAT_HEIGHT); // Return to default size
     };
 
     const showSubscription = Keyboard.addListener(
@@ -602,20 +624,14 @@ export default function ChatUI({
       <TouchableWithoutFeedback onPress={onClose}>
         <View style={styles.overlayTouchable} />
       </TouchableWithoutFeedback>
+
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={styles.keyboardAvoidingView}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
+        style={styles.chatPositioner}
+        keyboardVerticalOffset={Platform.OS === "ios" ? KEYBOARD_MARGIN : 0}
       >
-        <View
-          style={[
-            styles.chatWrapper,
-            {
-              marginBottom: keyboardHeight > 0 ? 0 : 80, // 80 accounts for tab bar height
-            },
-          ]}
-        >
-          <View style={[styles.chatContainer, { height: DEFAULT_CHAT_HEIGHT }]}>
+        <View style={styles.chatWrapper}>
+          <View style={[styles.chatContainer, { height: chatHeight }]}>
             {/* Header */}
             <View style={styles.header}>
               <TouchableOpacity
@@ -755,6 +771,9 @@ export default function ChatUI({
             </View>
           </View>
         </View>
+
+        {/* Add padding when keyboard is hidden */}
+        {keyboardHeight === 0 && <View style={{ height: BOTTOM_TAB_HEIGHT }} />}
       </KeyboardAvoidingView>
     </View>
   );
@@ -768,19 +787,17 @@ const styles = StyleSheet.create<ChatStyles>({
     right: 0,
     bottom: 0,
     backgroundColor: "rgba(0, 0, 0, 0.5)",
-    justifyContent: "flex-end",
     zIndex: 1000,
   },
   overlayTouchable: {
     flex: 1,
   },
-  keyboardAvoidingView: {
+  chatPositioner: {
     width: "100%",
     justifyContent: "flex-end",
   },
   chatWrapper: {
-    marginHorizontal: 16,
-    marginBottom: 80, // Default margin to account for tab bar
+    paddingHorizontal: 16,
   },
   chatContainer: {
     backgroundColor: "#fff",
