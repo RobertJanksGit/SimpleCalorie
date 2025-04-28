@@ -2,33 +2,47 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Allow users to read and write their own data
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Helper function to check if user is accessing their own data
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // User Profiles collection (contains weight goals)
+    match /userProfiles/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId);
+      allow delete: if false; // Prevent profile deletion
+    }
+
+    // Users collection and all subcollections (contains nutrition goals and chat history)
     match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read: if isOwner(userId);
+      allow write: if isOwner(userId);
       
-      // Allow access to user's logs
-      match /logs/{date} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
-        
-        // Allow access to individual meals
-        match /meals/{mealId} {
-          allow read, write: if request.auth != null && request.auth.uid == userId;
-        }
+      match /settings/{document} {
+        allow read: if isOwner(userId);
+        allow write: if isOwner(userId);
       }
-
-      // Allow access to user's daily totals
-      match /dailyTotals/{date} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
-      }
-
-      // Allow access to user's settings
-      match /settings/{document=**} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
-      }
-
-      // Allow access to user's chat history
+      
       match /chatHistory/{messageId} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
+        allow read: if isOwner(userId);
+        allow write: if isOwner(userId);
+      }
+      
+      match /dailyTotals/{date} {
+        allow read: if isOwner(userId);
+        allow write: if isOwner(userId);
+      }
+      
+      match /logs/{date}/meals/{mealId} {
+        allow read: if isOwner(userId);
+        allow write: if isOwner(userId);
       }
     }
   }

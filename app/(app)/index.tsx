@@ -794,7 +794,10 @@ export default function HomeScreen() {
             <Ionicons name="stats-chart" size={24} color="#666" />
             <Text style={styles.tabText}>Insights</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.tabItem}>
+          <TouchableOpacity
+            style={styles.tabItem}
+            onPress={() => router.push("/profile")}
+          >
             <Ionicons name="person-outline" size={24} color="#666" />
             <Text style={styles.tabText}>Profile</Text>
           </TouchableOpacity>

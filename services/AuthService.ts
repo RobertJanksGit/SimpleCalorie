@@ -9,6 +9,7 @@ import {
   AuthError,
 } from "firebase/auth";
 import { auth } from "../firebaseConfig";
+import { UserProfileService } from "./UserProfileService";
 
 // Define error types for better error handling
 export interface AuthErrorWithCode extends Error {
@@ -48,6 +49,14 @@ class AuthService {
         password
       );
       console.log("Registration successful:", userCredential.user.uid);
+
+      // Initialize user profile
+      const profileService = UserProfileService.getInstance();
+      await profileService.initializeUserProfile(userCredential.user.uid, {
+        username: email.split("@")[0], // Use part before @ as initial username
+        photoURL: "",
+      });
+
       return userCredential;
     } catch (error) {
       const authError = error as AuthErrorWithCode;

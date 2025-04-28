@@ -960,8 +960,8 @@ export const chatWithAI = functions
         .collection("users")
         .doc(userId)
         .collection("chatHistory")
-        .where("context.date", "==", today)
-        .orderBy("timestamp", "desc")
+        .where("context.date", "==", date)
+        .orderBy("timestamp", "asc")
         .limit(5);
 
       const chatHistorySnap = await chatHistoryRef.get();

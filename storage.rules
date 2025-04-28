@@ -5,6 +5,24 @@ rules_version = '2';
 //    /databases/(default)/documents/users/$(request.auth.uid)).data.isAdmin;
 service firebase.storage {
   match /b/{bucket}/o {
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Helper function to check if user is accessing their own data
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Profile images
+    match /profile-images/{userId} {
+      // Allow read access to all authenticated users
+      allow read: if isAuthenticated();
+      // Allow write access only to the owner
+      allow write: if isOwner(userId);
+    }
+
     // Allow public read access to all files
     match /{allPaths=**} {
       allow read: if true;
