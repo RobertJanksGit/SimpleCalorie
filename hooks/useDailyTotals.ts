@@ -21,8 +21,18 @@ interface UserGoals {
   fat: number;
 }
 
+const BASE_CALORIES = 2200; // Base maintenance calories
+
+const WEEKLY_RATES = [
+  { value: "maintain", label: "Maintain", dailyDeficit: 0 },
+  { value: "0.5", label: "Lose 1/2 lb", dailyDeficit: 250 },
+  { value: "1.0", label: "Lose 1 lb", dailyDeficit: 500 },
+  { value: "1.5", label: "Lose 1 1/2 lb", dailyDeficit: 750 },
+  { value: "2.0", label: "Lose 2 lb", dailyDeficit: 1000 },
+] as const;
+
 const DEFAULT_GOALS: UserGoals = {
-  calories: 2000,
+  calories: BASE_CALORIES, // This will be updated based on weekly rate
   protein: 120,
   carbs: 250,
   fat: 65,
@@ -44,13 +54,36 @@ export function useDailyTotals(userId: string) {
     const date = getLocalDate();
     const totalsRef = doc(db, `users/${userId}/dailyTotals/${date}`);
     const goalsRef = doc(db, `users/${userId}/settings/goals`);
+    const userProfileRef = doc(db, "userProfiles", userId);
 
-    // Fetch user goals
+    // Fetch user goals and weekly rate
     const fetchGoals = async () => {
       try {
+        // Get user profile to check weekly rate
+        const profileDoc = await getDoc(userProfileRef);
+        const weeklyRate = profileDoc.exists()
+          ? profileDoc.data().weeklyRate
+          : "maintain";
+
+        // Calculate calorie goal based on weekly rate
+        const rateSettings =
+          WEEKLY_RATES.find((r) => r.value === weeklyRate) || WEEKLY_RATES[0];
+        const calculatedCalories = BASE_CALORIES - rateSettings.dailyDeficit;
+
+        // Get other goals from settings
         const goalsDoc = await getDoc(goalsRef);
         if (goalsDoc.exists()) {
-          setGoals(goalsDoc.data() as UserGoals);
+          const goalsData = goalsDoc.data() as UserGoals;
+          setGoals({
+            ...goalsData,
+            calories: calculatedCalories, // Override calories with calculated value
+          });
+        } else {
+          // If no goals exist, use defaults with calculated calories
+          setGoals({
+            ...DEFAULT_GOALS,
+            calories: calculatedCalories,
+          });
         }
       } catch (err) {
         console.error("Error fetching goals:", err);

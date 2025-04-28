@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   View,
   Text,
@@ -34,6 +34,13 @@ export default function BudgetScreen() {
   const [selectedType, setSelectedType] = useState<BudgetType>("standard");
   const [showWeeklyRateModal, setShowWeeklyRateModal] = useState(false);
   const [selectedRate, setSelectedRate] = useState<WeeklyRate>("1.0");
+
+  // Update selectedRate when profile loads or changes
+  useEffect(() => {
+    if (profile?.weeklyRate) {
+      setSelectedRate(profile.weeklyRate as WeeklyRate);
+    }
+  }, [profile?.weeklyRate]);
 
   // Calculate daily calories based on selected rate
   const dailyCalories = useMemo(() => {
@@ -166,7 +173,7 @@ export default function BudgetScreen() {
               >
                 Standard
               </Text>
-              <Text style={styles.cardSubtitle}>Calculated by Lose It!</Text>
+              <Text style={styles.cardSubtitle}>Calculated by us</Text>
               <View style={styles.iconContainer}>
                 <Ionicons
                   name="checkmark-circle"

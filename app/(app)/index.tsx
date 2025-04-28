@@ -671,11 +671,6 @@ export default function HomeScreen() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <View style={[styles.container, { paddingTop: insets.top }]}>
         <ScrollView style={styles.scrollView}>
-          {/* Date Header */}
-          <Text style={styles.dateHeader}>
-            {new Date().toLocaleDateString()}
-          </Text>
-
           {/* Daily Summary Card */}
           <View style={styles.summaryCard}>
             <View style={styles.summaryHeader}>
@@ -832,11 +827,6 @@ const styles = StyleSheet.create({
   scrollView: {
     flex: 1,
     padding: 16,
-  },
-  dateHeader: {
-    fontSize: 16,
-    color: "#666",
-    marginBottom: 16,
   },
   summaryCard: {
     backgroundColor: "white",
