@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -7,6 +7,8 @@ import {
   ScrollView,
   TextInput,
   Alert,
+  Platform,
+  Modal,
 } from "react-native";
 import {
   SafeAreaView,
@@ -23,6 +25,11 @@ export default function GoalsTrackingScreen() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const { profile, loading, updateProfile } = useUserProfile(user?.uid);
+
+  // Add refs for the TextInputs
+  const startWeightInputRef = useRef<TextInput>(null);
+  const currentWeightInputRef = useRef<TextInput>(null);
+  const goalWeightInputRef = useRef<TextInput>(null);
 
   const [startDate, setStartDate] = useState(
     profile?.weightGoals?.startDate
@@ -77,9 +84,9 @@ export default function GoalsTrackingScreen() {
   };
 
   const handleDateChange = (event: any, selectedDate?: Date) => {
-    setShowDatePicker(false);
     if (selectedDate) {
       setStartDate(selectedDate);
+      setShowDatePicker(false);
     }
   };
 
@@ -150,10 +157,15 @@ export default function GoalsTrackingScreen() {
             </View>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.row}>
+          <TouchableOpacity
+            style={styles.row}
+            activeOpacity={0.7}
+            onPress={() => startWeightInputRef.current?.focus()}
+          >
             <Text style={styles.label}>Start Weight</Text>
             <View style={styles.valueContainer}>
               <TextInput
+                ref={startWeightInputRef}
                 style={styles.weightInput}
                 value={startWeight}
                 onChangeText={setStartWeight}
@@ -167,10 +179,15 @@ export default function GoalsTrackingScreen() {
 
         {/* Current and Goal Section */}
         <View style={styles.section}>
-          <TouchableOpacity style={styles.row}>
+          <TouchableOpacity
+            style={styles.row}
+            activeOpacity={0.7}
+            onPress={() => currentWeightInputRef.current?.focus()}
+          >
             <Text style={styles.label}>Current Weight</Text>
             <View style={styles.valueContainer}>
               <TextInput
+                ref={currentWeightInputRef}
                 style={styles.weightInput}
                 value={currentWeight}
                 onChangeText={setCurrentWeight}
@@ -181,10 +198,15 @@ export default function GoalsTrackingScreen() {
             </View>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.row}>
+          <TouchableOpacity
+            style={styles.row}
+            activeOpacity={0.7}
+            onPress={() => goalWeightInputRef.current?.focus()}
+          >
             <Text style={styles.label}>Goal Weight</Text>
             <View style={styles.valueContainer}>
               <TextInput
+                ref={goalWeightInputRef}
                 style={styles.weightInput}
                 value={goalWeight}
                 onChangeText={setGoalWeight}
@@ -209,16 +231,31 @@ export default function GoalsTrackingScreen() {
         <TouchableOpacity style={styles.resetButton} onPress={handleReset}>
           <Text style={styles.resetButtonText}>Start Fresh & Reset Plan</Text>
         </TouchableOpacity>
-
-        {showDatePicker && (
-          <DateTimePicker
-            value={startDate}
-            mode="date"
-            display="default"
-            onChange={handleDateChange}
-          />
-        )}
       </ScrollView>
+
+      {/* Date Picker Modal */}
+      <Modal visible={showDatePicker} transparent={true} animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Start Date</Text>
+              <TouchableOpacity
+                onPress={() => setShowDatePicker(false)}
+                style={styles.closeButton}
+              >
+                <Ionicons name="close" size={24} color="#333" />
+              </TouchableOpacity>
+            </View>
+            <DateTimePicker
+              value={startDate}
+              mode="date"
+              display="inline"
+              onChange={handleDateChange}
+              style={styles.datePicker}
+            />
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -270,6 +307,7 @@ const styles = StyleSheet.create({
     padding: 16,
     borderBottomWidth: 1,
     borderBottomColor: "#eee",
+    backgroundColor: "white",
   },
   label: {
     fontSize: 16,
@@ -290,6 +328,7 @@ const styles = StyleSheet.create({
     color: "#666",
     textAlign: "right",
     width: 50,
+    padding: 0,
   },
   unit: {
     fontSize: 16,
@@ -323,5 +362,36 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#2196F3",
     fontWeight: "500",
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  modalContent: {
+    backgroundColor: "white",
+    borderRadius: 12,
+    padding: 16,
+    width: "90%",
+    maxWidth: 400,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "600",
+    color: "#333",
+  },
+  closeButton: {
+    padding: 4,
+  },
+  datePicker: {
+    width: "100%",
+    height: 300,
   },
 });

@@ -45,5 +45,23 @@ service cloud.firestore {
         allow write: if isOwner(userId);
       }
     }
+
+    // Achievement collection rules
+    match /achievements/{achievementId} {
+      allow read: if request.auth != null;  // Any authenticated user can read
+      allow write: if false;  // Only admin can write via backend
+    }
+    
+    // User achievements rules
+    match /userAchievements/{userId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // User activity tracking rules
+    match /userActivity/{userId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
   }
 }

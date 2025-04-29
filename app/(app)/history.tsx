@@ -563,12 +563,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   calorieText: {
-    fontSize: 14,
+    fontSize: 10,
     fontWeight: "500",
     color: "#333",
   },
   calorieSuffix: {
-    fontSize: 10,
+    fontSize: 7,
     color: "#666",
   },
   selectedDayCard: {

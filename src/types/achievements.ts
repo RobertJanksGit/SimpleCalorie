@@ -1,20 +1,16 @@
 import { Timestamp } from "firebase/firestore";
 
+export type AchievementType = "streak" | "cumulative" | "social";
 export type AchievementCategory = "Daily" | "Habit" | "Goal" | "Social";
-export type AchievementType = "streak" | "single" | "cumulative" | "social";
 
 export interface AchievementCriteria {
-  action: string;
-  count?: number;
-  duration?: number;
-  target?: number;
-  conditions?: Record<string, any>;
+  count: number;
+  description?: string;
 }
 
 export interface AchievementReward {
   points: number;
-  badge: string;
-  title?: string;
+  description?: string;
 }
 
 export interface Achievement {
@@ -25,21 +21,25 @@ export interface Achievement {
   type: AchievementType;
   criteria: AchievementCriteria;
   reward?: AchievementReward;
-  hidden: boolean;
+  hidden?: boolean;
+  icon?: string;
 }
 
 export interface UserAchievementProgress {
-  achievementId: string;
-  currentCount?: number;
   currentStreak?: number;
-  highestStreak?: number;
-  lastUpdated: Timestamp;
-  completed: boolean;
+  currentCount?: number;
+  lastUpdated?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface UserAchievements {
-  userId: string;
   earnedAchievements: string[];
   progressTrackers: Record<string, UserAchievementProgress>;
-  totalPoints: number;
+  lastSynced?: string;
+}
+
+export interface AchievementToastData {
+  achievement: Achievement;
+  earnedAt: string;
+  points?: number;
 }
